@@ -146,17 +146,10 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _addClip() async {
-    final controller = TextEditingController();
-    final url = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('افزودن لینک کلیپ'),
-      content: TextField(controller: controller, autofocus: true, textDirection: TextDirection.ltr,
-        keyboardType: TextInputType.url, decoration: const InputDecoration(hintText: 'https://...')),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('انصراف')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('ذخیره')),
-      ],
-    ));
-    controller.dispose();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (_) => const _AddClipDialog(),
+    );
     if (url == null || url.isEmpty) return;
     final parsed = Uri.tryParse(url);
     if (parsed == null || !parsed.hasAuthority || !['https', 'http'].contains(parsed.scheme)) {
@@ -433,4 +426,47 @@ class _RaadHomeState extends State<RaadHome> {
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text(details)]))]));
 
   String _display(dynamic v) => v == null || v.toString().trim().isEmpty ? 'در دسترس نیست' : v.toString();
+}
+
+
+/// The dialog owns its controller so it remains alive throughout the route's
+/// reverse transition instead of being disposed immediately after Navigator.pop.
+class _AddClipDialog extends StatefulWidget {
+  const _AddClipDialog();
+
+  @override
+  State<_AddClipDialog> createState() => _AddClipDialogState();
+}
+
+class _AddClipDialogState extends State<_AddClipDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('افزودن لینک کلیپ'),
+        content: TextField(
+          controller: _controller,
+          autofocus: true,
+          textDirection: TextDirection.ltr,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(hintText: 'https://...'),
+          onSubmitted: (_) => Navigator.of(context).pop(_controller.text.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+            child: const Text('ذخیره'),
+          ),
+        ],
+      );
 }
