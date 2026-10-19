@@ -10,10 +10,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:gal/gal.dart';
 import 'services/clip_storage_service.dart';
+import 'services/app_version.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.0+4';
+const String raadAppVersion = '0.4.1+5';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
@@ -52,6 +53,8 @@ class _RaadHomeState extends State<RaadHome> {
   Map<String, dynamic> _manualProfile = {};
   String? _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
+  bool _requestingClipAccess = false;
+  bool? _clipGalleryAccess;
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
   List<Map<String, dynamic>> _savedPlayers = [];
@@ -83,6 +86,71 @@ class _RaadHomeState extends State<RaadHome> {
   void initState() {
     super.initState();
     _loadLocal();
+    // Ask for gallery-saving access as soon as the first screen is ready.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _requestClipStorageAccess(startup: true);
+    });
+  }
+
+  Future<void> _requestClipStorageAccess({bool startup = false}) async {
+    if (!mounted || _requestingClipAccess) return;
+
+    if (startup) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final alreadyPrompted =
+            prefs.getBool('raad.clipGalleryAccessPrompted.v1') ?? false;
+        if (alreadyPrompted) {
+          final currentAccess = await Gal.hasAccess(toAlbum: true);
+          if (mounted) setState(() => _clipGalleryAccess = currentAccess);
+          return;
+        }
+        await prefs.setBool('raad.clipGalleryAccessPrompted.v1', true);
+      } catch (_) {
+        // A permission attempt is still made if the local preference fails.
+      }
+    }
+
+    setState(() => _requestingClipAccess = true);
+    var granted = false;
+    String? failure;
+    try {
+      granted = await Gal.hasAccess(toAlbum: true);
+      if (!granted) granted = await Gal.requestAccess(toAlbum: true);
+    } catch (error) {
+      failure = error.toString();
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _clipGalleryAccess = granted;
+      _requestingClipAccess = false;
+    });
+
+    // On current Android versions, the system photo picker and MediaStore
+    // may not require a broad storage permission. Do not request all-files access.
+    if (startup) return;
+    if (granted) {
+      _toast('دسترسی ذخیرهٔ کلیپ در گالری آماده است.');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('دسترسی ذخیرهٔ کلیپ'),
+        content: Text(
+          failure == null
+              ? 'مجوز ذخیره در گالری صادر نشد. می‌توانی کلیپ را داخل کتابخانهٔ رعد ذخیره کنی؛ برای ذخیره در گالری، مجوز عکس‌ها و ویدیوها/ذخیره‌سازی رعد را در تنظیمات اندروید بررسی کن.'
+              : 'بررسی مجوز گالری با خطا روبه‌رو شد. کلیپ داخل رعد همچنان قابل ذخیره است. جزئیات: $failure',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('متوجه شدم'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadLocal() async {
@@ -350,8 +418,19 @@ class _RaadHomeState extends State<RaadHome> {
               : 'record:$i';
       grouped.putIfAbsent(identity, () => <Map<String, dynamic>>[]).add(row);
     }
+    DateTime? snapshotDate(Map<String, dynamic> row) {
+      final raw = row['saved_at']?.toString() ?? row['created_at']?.toString();
+      return raw == null ? null : DateTime.tryParse(raw);
+    }
+
     final result = <_LevelProgressEntry>[];
     for (final snapshots in grouped.values) {
+      // Prefer timestamps over list order so imported/reordered histories do not
+      // invert the measured level growth.
+      if (snapshots.every((row) => snapshotDate(row) != null)) {
+        snapshots.sort((a, b) =>
+            snapshotDate(b)!.compareTo(snapshotDate(a)!));
+      }
       final current = snapshots.first;
       final oldest = snapshots.last;
       final currentLevel = int.tryParse(current['level']?.toString() ?? '');
@@ -713,57 +792,109 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _checkForUpdates() async {
     if (!mounted) return;
-    setState(() { _checkingUpdate = true; _updateMessage = null; });
+    setState(() {
+      _checkingUpdate = true;
+      _updateMessage = null;
+      _updateApkUrl = null;
+      _latestTag = null;
+    });
+
     try {
       final response = await http.get(
         Uri.parse('https://api.github.com/repos/Amirho33ein7/RAAD/releases/latest'),
-        headers: const {'Accept': 'application/vnd.github+json', 'User-Agent': 'RAAD-Android'},
-      ).timeout(const Duration(seconds: 12));
+        headers: const {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'RAAD-Android',
+        },
+      ).timeout(const Duration(seconds: 15));
+
       if (response.statusCode == 404) {
-        if (mounted) setState(() { _latestTag = null; _updateApkUrl = null; _updateMessage = 'هنوز نسخه‌ای در بخش Releases منتشر نشده است.'; });
+        if (mounted) {
+          setState(() {
+            _updateMessage =
+                'هیچ Release رسمی و قابل‌بررسی در GitHub منتشر نشده است. بیلدهای آزمایشی Actions تا وقتی به Release پیوست نشوند، آپدیت قابل‌دانلود از این صفحه نیستند.';
+          });
+        }
         return;
       }
-      if (response.statusCode != 200) throw Exception('HTTP ${response.statusCode}');
+      if (response.statusCode == 403 || response.statusCode == 429) {
+        throw Exception('محدودیت تعداد درخواست‌های GitHub (HTTP ${response.statusCode})');
+      }
+      if (response.statusCode != 200) {
+        throw Exception('پاسخ GitHub ناموفق بود (HTTP ${response.statusCode})');
+      }
+
       final decoded = jsonDecode(response.body);
-      if (decoded is! Map) throw const FormatException('Invalid release JSON');
-      final tag = decoded['tag_name']?.toString() ?? '';
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('پاسخ Release از GitHub ساختار معتبری ندارد.');
+      }
+      final tag = decoded['tag_name']?.toString().trim() ?? '';
+      if (tag.isEmpty || !AppVersion.isValid(tag)) {
+        if (mounted) {
+          setState(() {
+            _latestTag = tag.isEmpty ? null : tag;
+            _updateMessage =
+                'GitHub یک Release برگرداند، اما تگ نسخهٔ آن قابل‌مقایسه نیست؛ وضعیت «به‌روز» اعلام نمی‌شود.';
+          });
+        }
+        return;
+      }
+
       final assets = decoded['assets'];
       String? apkUrl;
       if (assets is List) {
         for (final asset in assets) {
-          if (asset is Map && asset['name']?.toString().toLowerCase().endsWith('.apk') == true) {
-            apkUrl = asset['browser_download_url']?.toString();
-            break;
+          if (asset is Map &&
+              asset['name']?.toString().toLowerCase().endsWith('.apk') == true) {
+            final candidate = Uri.tryParse(
+              asset['browser_download_url']?.toString() ?? '',
+            );
+            if (candidate != null &&
+                candidate.scheme == 'https' &&
+                candidate.host == 'github.com') {
+              apkUrl = candidate.toString();
+              break;
+            }
           }
         }
       }
+
+      final comparison = AppVersion.compare(tag, raadAppVersion);
+      String message;
+      if (apkUrl == null) {
+        message = comparison != null && comparison > 0
+            ? 'نسخهٔ جدید $tag منتشر شده، اما فایل APK به Release پیوست نشده است؛ فعلاً لینک نصب معتبر وجود ندارد.'
+            : 'آخرین Release با تگ $tag فایل APK قابل‌دانلود ندارد؛ نمی‌توان از این Release نصب یا آپدیت کرد.';
+      } else if (comparison != null && comparison > 0) {
+        message = 'نسخهٔ جدید موجود است: $tag';
+      } else if (comparison == 0) {
+        message = 'نسخهٔ نصب‌شده به‌روز است ($raadAppVersion). آخرین Release: $tag';
+      } else {
+        message =
+            'آخرین Release منتشرشده ($tag) از نسخهٔ نصب‌شده ($raadAppVersion) قدیمی‌تر است؛ Release جدیدتری در دسترس نیست.';
+      }
+
       if (mounted) {
         setState(() {
           _latestTag = tag;
           _updateApkUrl = apkUrl;
-          _updateMessage = apkUrl == null
-              ? 'نسخهٔ منتشرشده فایل APK پیوست‌شده ندارد.'
-              : (_isNewerVersion(tag, raadAppVersion) ? 'نسخهٔ جدید موجود است: $tag' : 'نسخهٔ نصب‌شده به‌روز است ($raadAppVersion).');
+          _updateMessage = message;
         });
       }
-    } catch (_) {
-      if (mounted) setState(() => _updateMessage = 'بررسی آپدیت ناموفق بود؛ اتصال اینترنت یا محدودیت GitHub را بررسی کن.');
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _updateMessage =
+              'بررسی آپدیت کامل نشد: ${error.toString().replaceFirst('Exception: ', '')}. اتصال، تاریخ/ساعت دستگاه یا محدودیت GitHub را بررسی کن.';
+        });
+      }
     } finally {
       if (mounted) setState(() => _checkingUpdate = false);
     }
   }
 
-  bool _isNewerVersion(String remoteTag, String localVersion) {
-    List<int> parse(String value) => value.replaceFirst(RegExp(r'^[vV]'), '').split('+').first
-        .split('.').map((part) => int.tryParse(part) ?? 0).toList();
-    final remote = parse(remoteTag), local = parse(localVersion);
-    for (var i = 0; i < (remote.length > local.length ? remote.length : local.length); i++) {
-      final a = i < remote.length ? remote[i] : 0;
-      final b = i < local.length ? local[i] : 0;
-      if (a != b) return a > b;
-    }
-    return false;
-  }
+  bool _isNewerVersion(String remoteTag, String localVersion) =>
+      AppVersion.isNewer(remoteTag, localVersion);
 
   Future<void> _openUpdateDownload() async {
     final url = _updateApkUrl;
@@ -987,6 +1118,59 @@ class _RaadHomeState extends State<RaadHome> {
     _heading('تنظیمات'),
     const SizedBox(height: 12),
     _accountCard(),
+    const SizedBox(height: 12),
+    Card(
+      color: panel,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: accent.withValues(alpha: .22)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(children: [
+              Icon(Icons.video_library_outlined, color: accent),
+              SizedBox(width: 8),
+              Expanded(child: Text('ذخیرهٔ کلیپ در گالری گوشی',
+                style: TextStyle(fontWeight: FontWeight.bold))),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              _clipGalleryAccess == true
+                  ? 'وضعیت بررسی‌شده: دسترسی گالری آماده است.'
+                  : _requestingClipAccess
+                      ? 'در حال بررسی و درخواست مجوز...'
+                      : 'برای ذخیرهٔ کلیپ در گالری، مجوز را درخواست یا دوباره بررسی کن. انتخاب ویدیو از پنجرهٔ امن اندروید انجام می‌شود.',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _requestingClipAccess
+                    ? null
+                    : () => _requestClipStorageAccess(),
+                icon: _requestingClipAccess
+                    ? const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.folder_open_outlined),
+                label: Text(_requestingClipAccess
+                    ? 'در حال بررسی...'
+                    : 'درخواست دسترسی ذخیرهٔ کلیپ'),
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'رعد فقط مجوز لازم برای ذخیرهٔ ویدیو در گالری را می‌خواهد؛ دسترسی گستردهٔ همهٔ فایل‌های گوشی لازم نیست. کلیپ‌ها علاوه بر این در کتابخانهٔ خصوصی رعد نگه‌داری می‌شوند.',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    ),
     const SizedBox(height: 12),
     _action(Icons.edit_note_outlined, 'اطلاعات دستی پروفایل', 'ثبت یا اصلاح لول، رنک و امتیاز ناموجود', _editManualProfile),
     const SizedBox(height: 12),
