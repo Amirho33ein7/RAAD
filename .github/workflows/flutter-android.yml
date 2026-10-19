@@ -33,7 +33,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
 
       - name: Generate Android platform project
         working-directory: app
@@ -73,7 +73,9 @@ jobs:
 
       - name: Build release APK
         working-directory: app
-        run: flutter build apk --release --no-pub
+        timeout-minutes: 12
+        working-directory: app
+        run: flutter build apk --release --no-pub --verbose
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
