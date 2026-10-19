@@ -535,6 +535,7 @@ class _RaadHomeState extends State<RaadHome> {
         _toast('اندازهٔ ویدیو معتبر نیست یا از سقف ۵۰۰ مگابایت بیشتر است.');
         return;
       }
+      if (!mounted) return;
       final meta = await showDialog<Map<String, String>>(
         context: context,
         builder: (_) => _EditClipDialog(initialTitle: picked.name, initialDescription: ''),
@@ -548,6 +549,7 @@ class _RaadHomeState extends State<RaadHome> {
       } catch (_) {
         galleryAccess = false;
       }
+      if (!mounted) return;
       if (!galleryAccess) {
         final savePrivately = await showDialog<bool>(
           context: context,
