@@ -48,4 +48,32 @@ void main() {
     await openPage('تاریخچهٔ همگام‌سازی');
     expect(find.text('رخدادی ثبت نشده'), findsOneWidget);
   });
+
+  testWidgets('clip links can be added and removed locally', (tester) async {
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('کلیپ‌های من'),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('افزودن لینک کلیپ'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'https://example.com/my-clip');
+    await tester.tap(find.text('ذخیره'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('https://example.com/my-clip'), findsOneWidget);
+    expect(find.text('کتابخانه خالی است'), findsNothing);
+
+    await tester.tap(find.byTooltip('حذف'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('https://example.com/my-clip'), findsNothing);
+    expect(find.text('کتابخانه خالی است'), findsOneWidget);
+  });
 }
