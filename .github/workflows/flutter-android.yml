@@ -46,10 +46,16 @@ jobs:
           from pathlib import Path
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           source = manifest.read_text(encoding="utf-8")
-          permission = '<uses-permission android:name="android.permission.INTERNET" />'
-          if permission not in source:
-              source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
-              manifest.write_text(source, encoding="utf-8")
+          permissions = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
+          ]
+          for permission in permissions:
+              if permission not in source:
+                  source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
+          if 'android:requestLegacyExternalStorage="true"' not in source:
+              source = source.replace("<application", '<application android:requestLegacyExternalStorage="true"', 1)
+          manifest.write_text(source, encoding="utf-8")
           PY
 
       - name: Resolve dependencies
