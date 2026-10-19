@@ -88,7 +88,14 @@ void main() {
 
     final searchField = tester.widget<TextField>(find.byType(TextField).first);
     expect(searchField.controller?.text, 'UID-12345');
-    expect(find.text('Master III'), findsOneWidget);
+    final rankFinder = find.text('Master III', skipOffstage: false);
+    await tester.scrollUntilVisible(
+      rankFinder,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(rankFinder, findsOneWidget);
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
