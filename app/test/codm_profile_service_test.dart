@@ -43,6 +43,42 @@ void main() {
       service.close();
     });
 
+    test('normalizes a nested profile response without inventing fields', () async {
+      final service = CodmProfileService(
+        baseUrl: 'https://provider.example',
+        useBackend: false,
+        client: MockClient((_) async => http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {
+              'nickname': 'NestedPlayer',
+              'level': {'current': 76},
+              'rank': {
+                'class': 8,
+                'multiplayerRank': 'Master II',
+                'rating': 6120,
+              },
+              'countryCode': 'CA',
+              'avatarUrl': 'https://images.example/avatar.png',
+              'privateKdr': 9.99,
+            },
+          }),
+          200,
+        )),
+      );
+
+      final profile = await service.fetchProfile('NestedPlayer');
+      expect(profile['nickname'], 'NestedPlayer');
+      expect(profile['level'], 76);
+      expect(profile['rankClass'], 8);
+      expect(profile['customReadableMpRank'], 'Master II');
+      expect(profile['rating'], 6120);
+      expect(profile['country'], 'CA');
+      expect(profile['picUrl'], 'https://images.example/avatar.png');
+      expect(profile.containsKey('privateKdr'), isFalse);
+      service.close();
+    });
+
     test('rejects an unsuccessful provider response', () async {
       final service = CodmProfileService(
         baseUrl: 'https://provider.example',
