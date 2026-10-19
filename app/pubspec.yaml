@@ -1,7 +1,7 @@
 name: raad
 description: اپ همراه فارسی رعد برای پروفایل قابل‌دسترسی کالاف موبایل
 publish_to: 'none'
-version: 0.2.0+2
+version: 0.3.0+3
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
