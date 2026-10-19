@@ -29,17 +29,24 @@ class CodmProfileService {
   final http.Client _client;
   final bool _ownsClient;
 
+  // Only keep documented public fields. Providers may return either the older
+  // flat schema or the newer nested { level: { current }, rank: {...} } shape.
   static const allowedFields = <String>{
     'nickname',
     'level',
     'picUrl',
+    'avatarUrl',
     'rankClass',
     'customReadableMpRank',
     'customMpRankImageUrl',
     'rating',
     'shortId',
     'country',
+    'countryCode',
     'countryId',
+    'customLevelImageUrl',
+    'type',
+    'result',
   };
 
   Future<Map<String, dynamic>> fetchProfile(String input) async {
@@ -123,8 +130,40 @@ class CodmProfileService {
     final result = <String, dynamic>{};
     for (final key in allowedFields) {
       final value = candidateMap[key];
-      if (value != null) result[key] = value;
+      if (value != null && value is! Map && value is! List) {
+        result[key] = value;
+      }
     }
+
+    // Normalize only fields that are explicitly present; never invent stats.
+    final levelValue = candidateMap['level'];
+    if (levelValue is Map && levelValue['current'] != null) {
+      result['level'] = levelValue['current'];
+    }
+    final rankValue = candidateMap['rank'];
+    if (rankValue is Map) {
+      if (result['customReadableMpRank'] == null &&
+          rankValue['multiplayerRank'] != null) {
+        result['customReadableMpRank'] = rankValue['multiplayerRank'];
+      }
+      if (result['rankClass'] == null && rankValue['class'] != null) {
+        result['rankClass'] = rankValue['class'];
+      }
+      if (result['rating'] == null && rankValue['rating'] != null) {
+        result['rating'] = rankValue['rating'];
+      }
+    }
+    if (result['country'] == null && result['countryCode'] != null) {
+      result['country'] = result['countryCode'];
+    }
+    if (result['picUrl'] == null && result['avatarUrl'] != null) {
+      result['picUrl'] = result['avatarUrl'];
+    }
+    result.remove('countryCode');
+    result.remove('avatarUrl');
+    result.remove('type');
+    result.remove('result');
+
     if (result.isEmpty) {
       throw const ProfileApiException('هیچ فیلد قابل‌نمایشی در پاسخ وجود ندارد.');
     }
