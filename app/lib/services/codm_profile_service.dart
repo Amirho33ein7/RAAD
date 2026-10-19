@@ -137,8 +137,11 @@ class CodmProfileService {
 
     // Normalize only fields that are explicitly present; never invent stats.
     final levelValue = candidateMap['level'];
-    if (levelValue is Map && levelValue['current'] != null) {
-      result['level'] = levelValue['current'];
+    if (levelValue is Map) {
+      if (levelValue['current'] != null) result['level'] = levelValue['current'];
+      if (result['customLevelImageUrl'] == null && levelValue['image'] != null) {
+        result['customLevelImageUrl'] = levelValue['image'];
+      }
     }
     final rankValue = candidateMap['rank'];
     if (rankValue is Map) {
@@ -152,9 +155,15 @@ class CodmProfileService {
       if (result['rating'] == null && rankValue['rating'] != null) {
         result['rating'] = rankValue['rating'];
       }
+      if (result['customMpRankImageUrl'] == null && rankValue['image'] != null) {
+        result['customMpRankImageUrl'] = rankValue['image'];
+      }
     }
     if (result['country'] == null && result['countryCode'] != null) {
       result['country'] = result['countryCode'];
+    }
+    if (result['picUrl'] == null && result['pic'] != null) {
+      result['picUrl'] = result['pic'];
     }
     if (result['picUrl'] == null && result['avatarUrl'] != null) {
       result['picUrl'] = result['avatarUrl'];
