@@ -1,0 +1,72 @@
+name: Build RAAD Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/**'
+      - '.github/workflows/flutter-android.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android platform project
+        working-directory: app
+        run: flutter create --platforms=android --org com.raad.mobile --project-name raad .
+
+      - name: Ensure Android Internet permission
+        working-directory: app
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          source = manifest.read_text(encoding="utf-8")
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in source:
+              source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
+              manifest.write_text(source, encoding="utf-8")
+          PY
+
+      - name: Resolve dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze Dart
+        working-directory: app
+        run: flutter analyze --no-pub
+
+      - name: Test Flutter app
+        working-directory: app
+        run: flutter test --no-pub
+
+      - name: Build release APK
+        working-directory: app
+        run: flutter build apk --release --no-pub
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raad-android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
