@@ -859,3 +859,172 @@ class _AddClipDialogState extends State<_AddClipDialog> {
         ],
       );
 }
+
+
+class _EditClipDialog extends StatefulWidget {
+  const _EditClipDialog({required this.initialTitle, required this.initialDescription});
+
+  final String initialTitle;
+  final String initialDescription;
+
+  @override
+  State<_EditClipDialog> createState() => _EditClipDialogState();
+}
+
+class _EditClipDialogState extends State<_EditClipDialog> {
+  late final TextEditingController _title = TextEditingController(text: widget.initialTitle);
+  late final TextEditingController _description = TextEditingController(text: widget.initialDescription);
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('اطلاعات کلیپ'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: _title, autofocus: true, decoration: const InputDecoration(labelText: 'عنوان کلیپ')),
+            const SizedBox(height: 8),
+            TextField(controller: _description, minLines: 2, maxLines: 4,
+              decoration: const InputDecoration(labelText: 'توضیحات (اختیاری)')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(),
+            child: const Text('انصراف')),
+          FilledButton(onPressed: () => Navigator.of(context).pop({
+            'title': _title.text, 'description': _description.text,
+          }), child: const Text('ذخیره')),
+        ],
+      );
+}
+
+class _ManualProfileDialog extends StatefulWidget {
+  const _ManualProfileDialog({required this.initial});
+
+  final Map<String, dynamic> initial;
+
+  @override
+  State<_ManualProfileDialog> createState() => _ManualProfileDialogState();
+}
+
+class _ManualProfileDialogState extends State<_ManualProfileDialog> {
+  late final TextEditingController _nickname = TextEditingController(text: widget.initial['nickname']?.toString() ?? '');
+  late final TextEditingController _level = TextEditingController(text: widget.initial['level']?.toString() ?? '');
+  late final TextEditingController _rank = TextEditingController(text: widget.initial['customReadableMpRank']?.toString() ?? '');
+  late final TextEditingController _rating = TextEditingController(text: widget.initial['rating']?.toString() ?? '');
+  late final TextEditingController _shortId = TextEditingController(text: widget.initial['shortId']?.toString() ?? '');
+  late final TextEditingController _country = TextEditingController(text: widget.initial['country']?.toString() ?? '');
+
+  @override
+  void dispose() {
+    _nickname.dispose();
+    _level.dispose();
+    _rank.dispose();
+    _rating.dispose();
+    _shortId.dispose();
+    _country.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('ویرایش دستی پروفایل'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('فقط مقادیری را وارد کن که خودت می‌دانی. این موارد با برچسب ثبت دستی نمایش داده می‌شوند و دادهٔ دریافت‌شده از API محسوب نمی‌شوند.'),
+            const SizedBox(height: 12),
+            TextField(controller: _nickname, decoration: const InputDecoration(labelText: 'نام داخل بازی')),
+            TextField(controller: _level, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'لول')),
+            TextField(controller: _rank, decoration: const InputDecoration(labelText: 'رنک مولتی‌پلیر')),
+            TextField(controller: _rating, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'امتیاز رنک')),
+            TextField(controller: _shortId, decoration: const InputDecoration(labelText: 'شناسهٔ کوتاه')),
+            TextField(controller: _country, decoration: const InputDecoration(labelText: 'کد کشور (اختیاری)')),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(),
+            child: const Text('انصراف')),
+          TextButton(onPressed: () => Navigator.of(context).pop(<String, String>{}),
+            child: const Text('پاک‌کردن مقادیر دستی')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(<String, String>{
+            'nickname': _nickname.text,
+            'level': _level.text,
+            'customReadableMpRank': _rank.text,
+            'rating': _rating.text,
+            'shortId': _shortId.text,
+            'country': _country.text,
+          }), child: const Text('ذخیره')),
+        ],
+      );
+}
+
+class ClipPreviewPage extends StatefulWidget {
+  const ClipPreviewPage({super.key, required this.path, required this.title});
+
+  final String path;
+  final String title;
+
+  @override
+  State<ClipPreviewPage> createState() => _ClipPreviewPageState();
+}
+
+class _ClipPreviewPageState extends State<ClipPreviewPage> {
+  late final VideoPlayerController _controller = VideoPlayerController.file(File(widget.path));
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.initialize().then((_) {
+      if (mounted) setState(() {});
+    }).catchError((Object _) {
+      if (mounted) setState(() => _error = 'پخش این فرمت ویدیو در دستگاه ممکن نیست.');
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(title: Text(widget.title)),
+          body: Center(
+            child: _error != null
+                ? Padding(padding: const EdgeInsets.all(24), child: Text(_error!, textAlign: TextAlign.center))
+                : !_controller.value.isInitialized
+                    ? const CircularProgressIndicator()
+                    : Column(mainAxisSize: MainAxisSize.min, children: [
+                        AspectRatio(
+                          aspectRatio: _controller.value.aspectRatio > 0 ? _controller.value.aspectRatio : 16 / 9,
+                          child: VideoPlayer(_controller),
+                        ),
+                        const SizedBox(height: 12),
+                        IconButton.filled(
+                          iconSize: 34,
+                          onPressed: () {
+                            setState(() {
+                              _controller.value.isPlaying ? _controller.pause() : _controller.play();
+                            });
+                          },
+                          icon: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
+                        ),
+                        const SizedBox(height: 8),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: VideoProgressIndicator(_controller, allowScrubbing: true),
+                        ),
+                      ]),
+          ),
+        ),
+      );
+}
