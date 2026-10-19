@@ -38,7 +38,7 @@ jobs:
         working-directory: app
         run: flutter create --platforms=android --org com.raad.mobile --project-name raad .
 
-      - name: فعال‌کردن دسترسی اینترنت
+      - name: تنظیم مجوزهای ذخیره‌سازی
         working-directory: app
         shell: bash
         run: |
@@ -48,14 +48,276 @@ jobs:
           source = manifest.read_text(encoding="utf-8")
           permissions = [
               '<uses-permission android:name="android.permission.INTERNET" />',
-              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
+              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
           ]
           for permission in permissions:
               if permission not in source:
-                  source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
-          if 'android:requestLegacyExternalStorage="true"' not in source:
-              source = source.replace("<application", '<application android:requestLegacyExternalStorage="true"', 1)
+                  source = source.replace("<application", "    " + permission + "\\n\\n    <application", 1)
+          source = source.replace(' android:requestLegacyExternalStorage="true"', "")
           manifest.write_text(source, encoding="utf-8")
+          PY
+
+      - name: نصب کد ذخیرهٔ فایل در Download/RAAD
+        working-directory: app
+        shell: bash
+        run: |
+          cat > /tmp/raad-main-activity.kt <<'KOTLIN'
+          package __RAAD_PACKAGE__
+          
+          import android.Manifest
+          import android.content.ContentValues
+          import android.content.pm.PackageManager
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Environment
+          import android.provider.MediaStore
+          import android.database.Cursor
+          import androidx.core.app.ActivityCompat
+          import androidx.core.content.ContextCompat
+          import android.content.ContentResolver
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodCall
+          import io.flutter.plugin.common.MethodChannel
+          import java.io.File
+          import java.io.FileInputStream
+          import java.io.FileOutputStream
+          import java.io.IOException
+          
+          class MainActivity : FlutterActivity() {
+              private val channelName = "raad/file_storage"
+              private var pendingAccessResult: MethodChannel.Result? = null
+          
+              companion object {
+                  private const val STORAGE_PERMISSION_REQUEST = 9652
+              }
+          
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "ensureAccess" -> ensureAccess(result)
+                              "saveVideo" -> saveVideo(call, result)
+                              "deleteSavedVideo" -> deleteSavedVideo(call, result)
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+          
+              private fun ensureAccess(result: MethodChannel.Result) {
+                  // Android 10+ supports creating our own public Downloads files through
+                  // MediaStore. Broad MANAGE_EXTERNAL_STORAGE permission is not needed.
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      result.success(mapOf(
+                          "granted" to true,
+                          "message" to "ذخیرهٔ فایل در Download/RAAD با دسترسی امن سیستم آماده است."
+                      ))
+                      return
+                  }
+          
+                  if (ContextCompat.checkSelfPermission(
+                          this, Manifest.permission.WRITE_EXTERNAL_STORAGE
+                      ) == PackageManager.PERMISSION_GRANTED) {
+                      result.success(mapOf(
+                          "granted" to true,
+                          "message" to "مجوز ذخیره‌سازی فایل صادر شده است."
+                      ))
+                      return
+                  }
+          
+                  if (pendingAccessResult != null) {
+                      result.error("permission_in_progress", "درخواست دسترسی ذخیره‌سازی در حال نمایش است.", null)
+                      return
+                  }
+                  pendingAccessResult = result
+                  ActivityCompat.requestPermissions(
+                      this,
+                      arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                      STORAGE_PERMISSION_REQUEST
+                  )
+              }
+          
+              override fun onRequestPermissionsResult(
+                  requestCode: Int,
+                  permissions: Array<out String>,
+                  grantResults: IntArray
+              ) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  if (requestCode == STORAGE_PERMISSION_REQUEST) {
+                      val granted = grantResults.isNotEmpty() &&
+                          grantResults[0] == PackageManager.PERMISSION_GRANTED
+                      val pending = pendingAccessResult
+                      pendingAccessResult = null
+                      pending?.success(mapOf(
+                          "granted" to granted,
+                          "message" to if (granted)
+                              "مجوز ذخیره‌سازی فایل صادر شده است."
+                          else
+                              "مجوز ذخیره‌سازی فایل رد شد. از تنظیمات اندروید اجازه را فعال کن."
+                      ))
+                  }
+              }
+          
+              private fun saveVideo(call: MethodCall, result: MethodChannel.Result) {
+                  try {
+                      val sourcePath = call.argument<String>("sourcePath")
+                          ?: throw IllegalArgumentException("مسیر ویدیوی مبدأ ارسال نشده است.")
+                      val requestedName = call.argument<String>("fileName")
+                          ?: throw IllegalArgumentException("نام فایل ارسال نشده است.")
+                      val source = File(sourcePath)
+                      if (!source.isFile || !source.exists()) {
+                          throw IOException("فایل ویدیوی مبدأ دیگر در دسترس نیست.")
+                      }
+                      val expectedBytes = source.length()
+                      if (expectedBytes <= 0L) throw IOException("فایل ویدیوی مبدأ خالی است.")
+          
+                      val safeName = File(requestedName).name
+                          .replace(Regex("[^A-Za-z0-9._-]"), "_")
+                          .ifBlank { "raad_clip_${System.currentTimeMillis()}.mp4" }
+                      val mimeType = when (safeName.substringAfterLast('.', "").lowercase()) {
+                          "mov" -> "video/quicktime"
+                          "mkv" -> "video/x-matroska"
+                          "webm" -> "video/webm"
+                          "3gp" -> "video/3gpp"
+                          else -> "video/mp4"
+                      }
+          
+                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                          val values = ContentValues().apply {
+                              put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+                              put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                              put(
+                                  MediaStore.MediaColumns.RELATIVE_PATH,
+                                  Environment.DIRECTORY_DOWNLOADS + "/RAAD"
+                              )
+                              put(MediaStore.MediaColumns.IS_PENDING, 1)
+                          }
+                          val uri = contentResolver.insert(
+                              MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                          ) ?: throw IOException("سیستم فایل جدید را در پوشهٔ دانلود نساخت.")
+          
+                          try {
+                              val output = contentResolver.openOutputStream(uri, "w")
+                                  ?: throw IOException("نوشتن فایل در پوشهٔ دانلود ممکن نشد.")
+                              FileInputStream(source).use { input ->
+                                  output.use { target -> input.copyTo(target) }
+                              }
+          
+                              val complete = ContentValues().apply {
+                                  put(MediaStore.MediaColumns.IS_PENDING, 0)
+                              }
+                              contentResolver.update(uri, complete, null, null)
+          
+                              val actualBytes = querySize(contentResolver, uri)
+                              if (actualBytes != expectedBytes) {
+                                  throw IOException(
+                                      "اندازهٔ فایل ذخیره‌شده با مبدأ برابر نیست؛ مبدأ=$expectedBytes مقصد=$actualBytes"
+                                  )
+                              }
+                              result.success(mapOf(
+                                  "uri" to uri.toString(),
+                                  "displayPath" to "Download/RAAD/$safeName",
+                                  "fileName" to safeName,
+                                  "bytes" to actualBytes
+                              ))
+                          } catch (error: Exception) {
+                              contentResolver.delete(uri, null, null)
+                              throw error
+                          }
+                      } else {
+                          if (ContextCompat.checkSelfPermission(
+                                  this, Manifest.permission.WRITE_EXTERNAL_STORAGE
+                              ) != PackageManager.PERMISSION_GRANTED) {
+                              throw SecurityException("مجوز ذخیره‌سازی فایل صادر نشده است.")
+                          }
+                          val downloads = Environment.getExternalStoragePublicDirectory(
+                              Environment.DIRECTORY_DOWNLOADS
+                          )
+                          val directory = File(downloads, "RAAD")
+                          if (!directory.exists() && !directory.mkdirs()) {
+                              throw IOException("پوشهٔ Download/RAAD ساخته نشد.")
+                          }
+                          var destination = File(directory, safeName)
+                          var suffix = 1
+                          val dot = safeName.lastIndexOf('.')
+                          val stem = if (dot > 0) safeName.substring(0, dot) else safeName
+                          val extension = if (dot > 0) safeName.substring(dot) else ".mp4"
+                          while (destination.exists()) {
+                              destination = File(directory, "${stem}_${suffix++}$extension")
+                          }
+                          try {
+                              FileInputStream(source).use { input ->
+                                  FileOutputStream(destination).use { target -> input.copyTo(target) }
+                              }
+                              if (destination.length() != expectedBytes) {
+                                  throw IOException("تأیید اندازهٔ فایل ذخیره‌شده ناموفق بود.")
+                              }
+                              result.success(mapOf(
+                                  "uri" to Uri.fromFile(destination).toString(),
+                                  "displayPath" to "Download/RAAD/${destination.name}",
+                                  "fileName" to destination.name,
+                                  "bytes" to destination.length()
+                              ))
+                          } catch (error: Exception) {
+                              destination.delete()
+                              throw error
+                          }
+                      }
+                  } catch (error: Exception) {
+                      result.error("save_file_failed", error.message ?: "ذخیرهٔ فایل ناموفق بود.", null)
+                  }
+              }
+          
+              private fun querySize(resolver: ContentResolver, uri: Uri): Long {
+                  var cursor: Cursor? = null
+                  try {
+                      cursor = resolver.query(
+                          uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null
+                      )
+                      if (cursor != null && cursor.moveToFirst()) {
+                          return cursor.getLong(0)
+                      }
+                  } finally {
+                      cursor?.close()
+                  }
+                  return -1L
+              }
+          
+              private fun deleteSavedVideo(call: MethodCall, result: MethodChannel.Result) {
+                  try {
+                      val rawUri = call.argument<String>("uri")
+                          ?: throw IllegalArgumentException("شناسهٔ فایل ذخیره‌شده موجود نیست.")
+                      val uri = Uri.parse(rawUri)
+                      val deleted = when (uri.scheme) {
+                          "content" -> contentResolver.delete(uri, null, null) > 0
+                          "file" -> uri.path?.let { File(it).delete() } ?: false
+                          else -> false
+                      }
+                      result.success(deleted)
+                  } catch (error: Exception) {
+                      result.error("delete_file_failed", error.message ?: "حذف فایل ناموفق بود.", null)
+                  }
+              }
+          }
+          
+          KOTLIN
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          roots = Path("android/app/src/main/kotlin")
+          files = list(roots.rglob("MainActivity.kt"))
+          if len(files) != 1:
+              raise SystemExit(f"Expected one generated MainActivity.kt, found {len(files)}")
+          path = files[0]
+          old = path.read_text(encoding="utf-8")
+          match = re.search(r"^package\\s+([A-Za-z0-9_.]+)", old, re.MULTILINE)
+          if not match:
+              raise SystemExit("Generated MainActivity.kt has no package declaration")
+          template = Path("/tmp/raad-main-activity.kt").read_text(encoding="utf-8")
+          template = template.replace("package __RAAD_PACKAGE__", "package " + match.group(1), 1)
+          path.write_text(template, encoding="utf-8")
+          print(f"Installed RAAD file-storage channel: {path}")
           PY
 
       - name: دریافت وابستگی‌ها
