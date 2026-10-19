@@ -63,13 +63,6 @@ class CodmProfileService {
       throw const ProfileApiException('ارتباط با سرویس پروفایل برقرار نشد.');
     }
 
-    dynamic body;
-    try {
-      body = jsonDecode(response.body);
-    } on FormatException {
-      throw const ProfileApiException('پاسخ سرویس JSON معتبر نیست.');
-    }
-
     if (response.statusCode == 404) {
       throw const ProfileApiException(
         'پروفایلی پیدا نشد یا سرویس آن را ارائه نمی‌کند.',
@@ -88,6 +81,20 @@ class CodmProfileService {
         statusCode: response.statusCode,
       );
     }
+
+    dynamic body;
+    try {
+      body = jsonDecode(response.body);
+    } on FormatException {
+      if (response.statusCode != 200) {
+        throw ProfileApiException(
+          'سرویس پروفایل پاسخ خطا داد (HTTP ' + response.statusCode.toString() + ').',
+          statusCode: response.statusCode,
+        );
+      }
+      throw const ProfileApiException('پاسخ سرویس JSON معتبر نیست.');
+    }
+
     if (response.statusCode != 200) {
       final detail = body is Map ? (body['detail'] ?? body['message']) : null;
       throw ProfileApiException(
