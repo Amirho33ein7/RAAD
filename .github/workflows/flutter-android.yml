@@ -1,5 +1,9 @@
 name: Build RAAD Android APK
 
+concurrency:
+  group: raad-android-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
