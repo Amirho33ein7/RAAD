@@ -640,7 +640,7 @@ class _RaadHomeState extends State<RaadHome> {
       final publicBytes = int.tryParse(publicResult?['bytes']?.toString() ?? '');
       final publicPath = publicResult?['displayPath']?.toString();
       if (publicFileUri == null ||
-          publicFileUri!.isEmpty ||
+          publicFileUri.isEmpty ||
           publicBytes != stored.sizeBytes ||
           publicPath == null ||
           publicPath.isEmpty) {
