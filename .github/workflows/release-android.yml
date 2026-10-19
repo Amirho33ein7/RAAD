@@ -1,0 +1,88 @@
+name: Publish RAAD Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag, for example v0.3.0"
+        required: true
+        default: "v0.3.0"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: دریافت سورس
+        uses: actions/checkout@v4
+
+      - name: آماده‌سازی Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: آماده‌سازی Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: تولید پروژه Android
+        working-directory: app
+        run: flutter create --platforms=android --org com.raad.mobile --project-name raad .
+
+      - name: فعال‌کردن دسترسی اینترنت
+        working-directory: app
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          source = manifest.read_text(encoding="utf-8")
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in source:
+              source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
+              manifest.write_text(source, encoding="utf-8")
+          PY
+
+      - name: دریافت وابستگی‌ها
+        working-directory: app
+        run: flutter pub get
+
+      - name: تحلیل کد Dart
+        working-directory: app
+        run: flutter analyze --no-pub
+
+      - name: اجرای تست‌ها
+        working-directory: app
+        run: flutter test --no-pub
+
+      - name: ساخت APK نسخه انتشار
+        working-directory: app
+        env:
+          RAAD_GOOGLE_SERVER_CLIENT_ID: ${{ secrets.RAAD_GOOGLE_SERVER_CLIENT_ID }}
+        run: flutter build apk --release --no-pub --dart-define=RAAD_GOOGLE_SERVER_CLIENT_ID="$RAAD_GOOGLE_SERVER_CLIENT_ID"
+
+      - name: بارگذاری APK به‌عنوان artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: raad-android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: انتشار فایل نصب در GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          target_commitish: main
+          name: RAAD ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          generate_release_notes: true
+          files: app/build/app/outputs/flutter-apk/app-release.apk
