@@ -63,6 +63,8 @@ async def get_profile(q: str = Query(min_length=1, max_length=80, description="�
         raise HTTPException(status_code=504, detail="مهلت پاسخ سرویس پروفایل تمام شد. کمی بعد دوباره تلاش کن.") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="ارتباط با سرویس پروفایل برقرار نشد.") from exc
+    if 300 <= response.status_code < 400:
+        raise HTTPException(status_code=502, detail="سرویس پروفایل یک تغییر مسیر غیرمنتظره برگرداند.")
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="پروفایلی پیدا نشد یا سرویس آن را ارائه نمی‌کند.")
     if response.status_code == 429:
