@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/codm_profile_service.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
@@ -33,6 +34,10 @@ class RaadHome extends StatefulWidget {
 class _RaadHomeState extends State<RaadHome> {
   final _query = TextEditingController();
   final _compareQuery = TextEditingController();
+  late final CodmProfileService _profileService = CodmProfileService(
+    baseUrl: backendBaseUrl,
+    useBackend: useBackend,
+  );
   Map<String, dynamic>? _profile, _otherProfile;
   String? _error, _compareError;
   bool _loading = false, _compareLoading = false;
@@ -64,44 +69,8 @@ class _RaadHomeState extends State<RaadHome> {
     }
   }
 
-  Future<Map<String, dynamic>> _fetchProfile(String q) async {
-    final uri = useBackend
-        ? Uri.parse(backendBaseUrl + '/api/v1/codm/profile').replace(queryParameters: {'q': q})
-        : Uri.parse(backendBaseUrl + '/user/' + Uri.encodeComponent(q));
-    final response = await http.get(uri, headers: const {'Accept': 'application/json'})
-        .timeout(const Duration(seconds: 15));
-    dynamic body;
-    try {
-      body = jsonDecode(response.body);
-    } on FormatException {
-      throw Exception('پاسخ سرویس قابل‌خواندن نیست.');
-    }
-    if (response.statusCode != 200) {
-      final detail = body is Map ? (body['detail'] ?? body['message']) : null;
-      throw Exception(detail?.toString() ?? 'سرویس پروفایل پاسخ خطا داد (HTTP ' + response.statusCode.toString() + ').');
-    }
-    if (body is! Map) throw Exception('ساختار پاسخ سرویس معتبر نیست.');
-    if (!useBackend && body['success'] == false) {
-      throw Exception(body['message']?.toString() ?? 'سرویس نتوانست این پروفایل را پیدا کند.');
-    }
-
-    dynamic data = body;
-    if (!useBackend) data = body['data'] ?? body['user'] ?? body['profile'] ?? body;
-    if (data is! Map) throw Exception('دادهٔ پروفایل در پاسخ سرویس وجود ندارد.');
-    final raw = Map<String, dynamic>.from(data);
-    const allowed = <String>[
-      'nickname', 'level', 'picUrl', 'rankClass', 'customReadableMpRank',
-      'customMpRankImageUrl', 'rating', 'shortId', 'country', 'countryId',
-    ];
-    final result = <String, dynamic>{};
-    for (final field in allowed) {
-      if (raw[field] != null) result[field] = raw[field];
-    }
-    if (result.isEmpty) throw Exception('هیچ فیلد قابل‌نمایشی در پاسخ وجود ندارد.');
-    result['data_source'] = 'unofficial';
-    result['retrieved_at_unix'] = body['retrieved_at_unix'] ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    return result;
-  }
+  Future<Map<String, dynamic>> _fetchProfile(String q) =>
+      _profileService.fetchProfile(q);
 
   String _errorText(Object error) {
     final msg = error.toString().replaceFirst('Exception: ', '');
@@ -230,7 +199,12 @@ class _RaadHomeState extends State<RaadHome> {
   void _go(int page) { Navigator.pop(context); setState(() => _page = page); }
 
   @override
-  void dispose() { _query.dispose(); _compareQuery.dispose(); super.dispose(); }
+  void dispose() {
+    _query.dispose();
+    _compareQuery.dispose();
+    _profileService.close();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Directionality(textDirection: TextDirection.rtl, child: Scaffold(
