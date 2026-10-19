@@ -2,7 +2,7 @@ name: Build RAAD Android APK
 
 concurrency:
   # Only the newest build on a branch should run; prevent stuck older APK builds from piling up.
-  group: raad-android-${{ github.ref }}
+  group: raad-android-${{ github.ref }}-recovery
   cancel-in-progress: true
 
 on:
