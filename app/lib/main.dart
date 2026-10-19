@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/codm_profile_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
@@ -177,6 +178,23 @@ class _RaadHomeState extends State<RaadHome> {
     if (mounted) setState(() => _clips = next);
   }
 
+  Future<void> _openClip(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !uri.hasAuthority ||
+        !const {'http', 'https'}.contains(uri.scheme)) {
+      _toast('لینک ذخیره‌شده معتبر نیست.');
+      return;
+    }
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened) _toast('بازکردن لینک ناموفق بود؛ مرورگر پیش‌فرض را بررسی کن.');
+    } catch (_) {
+      _toast('بازکردن لینک انجام نشد. برنامهٔ مرورگر را بررسی کن.');
+    }
+  }
+
+
   Future<void> _clearHistory() async {
     final yes = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('پاک‌کردن تاریخچه؟'),
@@ -344,7 +362,10 @@ class _RaadHomeState extends State<RaadHome> {
       leading: const Icon(Icons.play_circle_outline, color: accent),
       title: SelectableText(url, textDirection: TextDirection.ltr),
       subtitle: const Text('ذخیره‌شده روی دستگاه'),
-      trailing: IconButton(tooltip: 'حذف', onPressed: () => _removeClip(url), icon: const Icon(Icons.delete_outline)),
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(tooltip: 'بازکردن لینک', onPressed: () => _openClip(url), icon: const Icon(Icons.open_in_new)),
+        IconButton(tooltip: 'حذف', onPressed: () => _removeClip(url), icon: const Icon(Icons.delete_outline)),
+      ]),
     ))),
   ]);
 
