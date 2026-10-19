@@ -14,7 +14,7 @@ void main() {
         useBackend: false,
         client: MockClient((request) async {
           expect(request.method, 'GET');
-          expect(request.url.path, '/user/Player%20One');
+          expect(request.url.pathSegments, ['user', 'Player One']);
           return http.Response(
             jsonEncode({
               'success': true,
@@ -177,12 +177,12 @@ void main() {
       service.close();
     });
 
-    test('accepts profile wrapper keys only when their value is an object', () async {
+    test('accepts documented fields at the response root when no wrapper exists', () async {
       final service = CodmProfileService(
         baseUrl: 'https://provider.example',
         useBackend: false,
         client: MockClient((_) async => http.Response(
-          jsonEncode({'success': true, 'data': 'not-an-object', 'nickname': 'TopLevelPlayer'}),
+          jsonEncode({'success': true, 'nickname': 'TopLevelPlayer'}),
           200,
         )),
       );
