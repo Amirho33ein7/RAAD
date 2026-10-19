@@ -1,37 +1,33 @@
-# راهنمای سرور رعد
+# راهنمای Backend رعد
 
-## نصب
+## نصب و اجرا
 
-```bash
-python -m venv .venv
-# ویندوز: .venv\\Scripts\\activate
-# لینوکس/macOS: source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+    python -m venv .venv
+    # Windows: .venv\Scripts\activate
+    # macOS/Linux: source .venv/bin/activate
+    pip install -r requirements-dev.txt
+    uvicorn app.main:app --reload
 
-سرور روی `http://127.0.0.1:8000` اجرا می‌شود؛ مستندات در `/docs` و بررسی سلامت در `/health` است.
+سرور محلی روی http://127.0.0.1:8000 اجرا می‌شود. مستندات در /docs و بررسی سلامت در /health هستند.
 
-## مسیرها
+## مسیرهای API
 
-- `GET /health` — سلامت خود Backend
-- `GET /api/v1/capabilities` — فهرست قابلیت‌های واقعی و محدودیت‌ها
-- `GET /api/v1/codm/profile?q=<نام-یا-شناسه>` — دریافت فیلدهای مستندشده از سرویس غیررسمی
+- GET /health — وضعیت سرور
+- GET /api/v1/capabilities — فهرست قابلیت‌های موجود و محدودیت‌ها
+- GET /api/v1/codm/profile?q=<nickname-or-uid> — پروکسی کنترل‌شده برای فیلدهای پروفایل
 
-## متغیرهای محیطی
+## تنظیمات
 
-متغیرهای نمونه در `.env.example` هستند. در این نسخه تنظیمات از متغیرهای محیط سیستم خوانده می‌شوند؛ برای بارگذاری خودکار فایل `.env` باید `python-dotenv` نصب و پیکربندی شود. اطلاعات محرمانه را در مخزن ثبت نکنید.
+تنظیمات نمونه در فایل .env.example آمده‌اند. ماژول از python-dotenv برای بارگذاری فایل .env استفاده می‌کند. برای تغییر ارائه‌دهنده، مقدار CODM_API_BASE_URL را تنظیم کن. فایل .env حاوی اطلاعات خصوصی را commit نکن.
 
 ## تست
 
-```bash
-pip install -r requirements-dev.txt
-pytest -q
-```
+    PYTHONPATH=. python -m pytest -q
 
 ## محدودیت‌ها
 
-- این سرویس شخص ثالث و غیررسمی است و ممکن است قطع یا تغییر کند.
-- فیلدهای برگشتی به پاسخ واقعی سرویس وابسته‌اند.
+- سرویس منبع شخص ثالث و غیررسمی است؛ پاسخ، پایداری، دقت و پوشش منطقه‌ای آن تضمین نمی‌شود.
+- Backend فقط فیلدهای مجاز و موجود را عبور می‌دهد و برای دادهٔ ناموجود مقدار ساختگی تولید نمی‌کند.
 - API فعلی تاریخچهٔ مسابقات یا آمار کیل، دث و برد را تضمین نمی‌کند.
-- در نسخهٔ فعلی، PostgreSQL و ثبت ماندگار Rank Tracker هنوز پیاده‌سازی نشده‌اند.
+- این سرویس هنوز به PostgreSQL یا Firebase متصل نیست؛ cache آن درون‌حافظه‌ای و موقت است.
+- Rank Tracker و فهرست لینک کلیپ‌ها در نسخهٔ فعلی اپ به‌صورت محلی روی دستگاه ذخیره می‌شوند، نه در Backend.
