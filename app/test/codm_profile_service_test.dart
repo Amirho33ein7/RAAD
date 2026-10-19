@@ -137,7 +137,7 @@ void main() {
 
       await expectLater(service.fetchProfile('  '), throwsA(isA<ProfileApiException>()));
       await expectLater(service.fetchProfile('bad\nname'), throwsA(isA<ProfileApiException>()));
-      await expectLater(service.fetchProfile('x' * 81), throwsA(isA<ProfileApiException>()));
+      await expectLater(service.fetchProfile(List<String>.filled(81, 'x').join()), throwsA(isA<ProfileApiException>()));
       expect(requests, 0);
       service.close();
     });
