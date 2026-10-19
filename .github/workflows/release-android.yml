@@ -52,7 +52,7 @@ jobs:
           ]
           for permission in permissions:
               if permission not in source:
-                  source = source.replace("<application", "    " + permission + "\\n\\n    <application", 1)
+                  source = source.replace("<application", "    " + permission + "\n\n    <application", 1)
           source = source.replace(' android:requestLegacyExternalStorage="true"', "")
           manifest.write_text(source, encoding="utf-8")
           PY
@@ -311,7 +311,7 @@ jobs:
               raise SystemExit(f"Expected one generated MainActivity.kt, found {len(files)}")
           path = files[0]
           old = path.read_text(encoding="utf-8")
-          match = re.search(r"^package\\s+([A-Za-z0-9_.]+)", old, re.MULTILINE)
+          match = re.search(r"^package\s+([A-Za-z0-9_.]+)", old, re.MULTILINE)
           if not match:
               raise SystemExit("Generated MainActivity.kt has no package declaration")
           template = Path("/tmp/raad-main-activity.kt").read_text(encoding="utf-8")
