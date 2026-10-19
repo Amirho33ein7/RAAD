@@ -1,7 +1,8 @@
 name: Build RAAD Android APK
 
 concurrency:
-  group: raad-android-${{ github.ref }}
+  # Keep each commit's build independent; a slow Gradle build must not block the newest app version.
+  group: raad-android-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 on:
