@@ -33,7 +33,7 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: false
+          cache: true
 
       - name: Generate Android platform project
         working-directory: app
