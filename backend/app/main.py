@@ -6,9 +6,11 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+load_dotenv()
 APP_NAME = "رعد | RAAD API"
 PROVIDER_BASE_URL = os.getenv("CODM_API_BASE_URL", "https://callofdutymobile.vercel.app").rstrip("/")
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
@@ -25,7 +27,6 @@ def _normalize_profile(payload: Any) -> dict[str, Any]:
     """Keep only documented fields that are actually present; never synthesize stats."""
     if not isinstance(payload, dict):
         raise HTTPException(status_code=502, detail="پاسخ سرویس پروفایل قابل‌فهم نیست.")
-    # Providers sometimes wrap the actual object; accept only obvious documented containers.
     candidate: Any = payload
     for key in ("data", "user", "profile"):
         if isinstance(candidate, dict) and isinstance(candidate.get(key), dict):
