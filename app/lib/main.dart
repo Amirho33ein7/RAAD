@@ -59,7 +59,16 @@ class _RaadHomeState extends State<RaadHome> {
   List<String> _events = [];
 
   Map<String, dynamic>? get _displayProfile {
-    final merged = <String, dynamic>{...? _profile};
+    final apiProfile = _profile;
+    if (apiProfile != null && _manualProfile.isNotEmpty) {
+      final manualName = _manualProfile['nickname']?.toString().trim().toLowerCase() ?? '';
+      final apiName = apiProfile['nickname']?.toString().trim().toLowerCase() ?? '';
+      // Never blend the owner's manual values into another player's API result.
+      if (manualName.isEmpty || apiName.isEmpty || manualName != apiName) {
+        return Map<String, dynamic>.from(apiProfile);
+      }
+    }
+    final merged = <String, dynamic>{...?apiProfile};
     for (final entry in _manualProfile.entries) {
       if (entry.value != null && entry.value.toString().trim().isNotEmpty) {
         merged[entry.key] = entry.value;
