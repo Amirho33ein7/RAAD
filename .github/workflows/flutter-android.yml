@@ -74,7 +74,6 @@ jobs:
       - name: Build release APK
         working-directory: app
         timeout-minutes: 12
-        working-directory: app
         run: flutter build apk --release --no-pub --verbose
 
       - name: Upload APK artifact
