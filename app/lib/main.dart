@@ -274,6 +274,10 @@ class _RaadHomeState extends State<RaadHome> {
       final ext = picked.name.contains('.') ? '.${picked.name.split('.').last}' : '.mp4';
       final targetPath = '${clipDir.path}/clip_${DateTime.now().millisecondsSinceEpoch}$ext';
       await source.copy(targetPath);
+      if (!mounted) {
+        await File(targetPath).delete().catchError((_) => File(targetPath));
+        return;
+      }
       final meta = await showDialog<Map<String, String>>(
         context: context,
         builder: (_) => _EditClipDialog(initialTitle: picked.name, initialDescription: ''),
@@ -442,13 +446,15 @@ class _RaadHomeState extends State<RaadHome> {
           }
         }
       }
-      if (mounted) setState(() {
-        _latestTag = tag;
-        _updateApkUrl = apkUrl;
-        _updateMessage = apkUrl == null
-            ? 'نسخهٔ منتشرشده فایل APK پیوست‌شده ندارد.'
-            : (_isNewerVersion(tag, raadAppVersion) ? 'نسخهٔ جدید موجود است: $tag' : 'نسخهٔ نصب‌شده به‌روز است ($raadAppVersion).');
-      });
+      if (mounted) {
+        setState(() {
+          _latestTag = tag;
+          _updateApkUrl = apkUrl;
+          _updateMessage = apkUrl == null
+              ? 'نسخهٔ منتشرشده فایل APK پیوست‌شده ندارد.'
+              : (_isNewerVersion(tag, raadAppVersion) ? 'نسخهٔ جدید موجود است: $tag' : 'نسخهٔ نصب‌شده به‌روز است ($raadAppVersion).');
+        });
+      }
     } catch (_) {
       if (mounted) setState(() => _updateMessage = 'بررسی آپدیت ناموفق بود؛ اتصال اینترنت یا محدودیت GitHub را بررسی کن.');
     } finally {
