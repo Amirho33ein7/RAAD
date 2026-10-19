@@ -94,6 +94,9 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _requestClipStorageAccess({bool startup = false}) async {
     if (!mounted || _requestingClipAccess) return;
+    // Gallery access is a mobile feature; skip platform-channel permission
+    // calls on desktop/test hosts where the native plugin is not registered.
+    if (startup && !Platform.isAndroid && !Platform.isIOS) return;
 
     if (startup) {
       try {
