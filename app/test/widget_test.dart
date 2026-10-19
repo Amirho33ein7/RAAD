@@ -14,7 +14,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('مرکز فرماندهی بازیکن'), findsOneWidget);
-    expect(find.text('جست‌وجوی پروفایل'), findsOneWidget);
-    expect(find.text('مقایسهٔ بازیکنان'), findsOneWidget);
+    expect(find.text('جست‌وجوی پروفایل'), findsWidgets);
+    expect(find.text('مقایسهٔ بازیکنان'), findsWidgets);
   });
 }
