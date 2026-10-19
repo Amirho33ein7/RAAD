@@ -125,4 +125,55 @@ void main() {
     expect(find.text('https://example.com/my-clip'), findsNothing);
     expect(find.text('کتابخانه خالی است'), findsOneWidget);
   });
+
+
+  testWidgets('level leaderboard sorts players by saved level growth', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'raad.rankHistory.v1': [
+        jsonEncode({
+          'nickname': 'FastLeveler',
+          'shortId': 'FAST-1',
+          'level': 40,
+          'saved_at': '2026-10-20T12:00:00.000',
+        }),
+        jsonEncode({
+          'nickname': 'FastLeveler',
+          'shortId': 'FAST-1',
+          'level': 30,
+          'saved_at': '2026-10-10T12:00:00.000',
+        }),
+        jsonEncode({
+          'nickname': 'SlowLeveler',
+          'shortId': 'SLOW-1',
+          'level': 17,
+          'saved_at': '2026-10-20T12:00:00.000',
+        }),
+        jsonEncode({
+          'nickname': 'SlowLeveler',
+          'shortId': 'SLOW-1',
+          'level': 12,
+          'saved_at': '2026-10-10T12:00:00.000',
+        }),
+      ],
+    });
+
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('ردیاب رنک'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('رتبه‌بندی بر اساس پیشرفت لول'), findsOneWidget);
+    expect(find.text('+10 لول'), findsOneWidget);
+    expect(find.text('+5 لول'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('FastLeveler').first).dy,
+      lessThan(tester.getTopLeft(find.text('SlowLeveler').first).dy),
+    );
+  });
+
 }
