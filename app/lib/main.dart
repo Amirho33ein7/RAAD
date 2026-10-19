@@ -8,12 +8,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:gal/gal.dart';
+import 'services/clip_storage_service.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.3.0+3';
-const String googleServerClientId = String.fromEnvironment('RAAD_GOOGLE_SERVER_CLIENT_ID');
+const String raadAppVersion = '0.4.0+4';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
@@ -50,7 +50,6 @@ class _RaadHomeState extends State<RaadHome> {
   );
   Map<String, dynamic>? _profile, _otherProfile;
   Map<String, dynamic> _manualProfile = {};
-  GoogleSignInAccount? _googleUser;
   String? _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
   int _page = 0;
@@ -84,20 +83,6 @@ class _RaadHomeState extends State<RaadHome> {
   void initState() {
     super.initState();
     _loadLocal();
-    _restoreGoogleSession();
-  }
-
-  Future<void> _restoreGoogleSession() async {
-    if (googleServerClientId.trim().isEmpty) return;
-    try {
-      final account = await GoogleSignIn(
-        serverClientId: googleServerClientId,
-        scopes: const ['email'],
-      ).signInSilently();
-      if (mounted && account != null) setState(() => _googleUser = account);
-    } catch (_) {
-      // Google login is optional until the app owner configures OAuth.
-    }
   }
 
   Future<void> _loadLocal() async {
@@ -352,9 +337,165 @@ class _RaadHomeState extends State<RaadHome> {
     } catch (_) { _toast('ذخیرهٔ رکورد ناموفق بود.'); }
   }
 
+  List<_LevelProgressEntry> _levelProgressEntries() {
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (var i = 0; i < _rankHistory.length; i++) {
+      final row = _rankHistory[i];
+      final shortId = row['shortId']?.toString().trim().toLowerCase() ?? '';
+      final nickname = row['nickname']?.toString().trim().toLowerCase() ?? '';
+      final identity = shortId.isNotEmpty
+          ? 'id:$shortId'
+          : nickname.isNotEmpty
+              ? 'name:$nickname'
+              : 'record:$i';
+      grouped.putIfAbsent(identity, () => <Map<String, dynamic>>[]).add(row);
+    }
+    final result = <_LevelProgressEntry>[];
+    for (final snapshots in grouped.values) {
+      final current = snapshots.first;
+      final oldest = snapshots.last;
+      final currentLevel = int.tryParse(current['level']?.toString() ?? '');
+      final oldestLevel = int.tryParse(oldest['level']?.toString() ?? '');
+      final change = snapshots.length > 1 && currentLevel != null && oldestLevel != null
+          ? currentLevel - oldestLevel
+          : null;
+      result.add(_LevelProgressEntry(
+        nickname: current['nickname']?.toString().trim().isNotEmpty == true
+            ? current['nickname'].toString()
+            : 'بازیکن بدون نام',
+        currentLevel: currentLevel,
+        levelChange: change,
+        snapshotCount: snapshots.length,
+      ));
+    }
+    result.sort((a, b) {
+      if (a.levelChange != null && b.levelChange != null) {
+        final byChange = b.levelChange!.compareTo(a.levelChange!);
+        if (byChange != 0) return byChange;
+      } else if (a.levelChange != null) {
+        return -1;
+      } else if (b.levelChange != null) {
+        return 1;
+      }
+      return (b.currentLevel ?? -1).compareTo(a.currentLevel ?? -1);
+    });
+    return result;
+  }
+
+  Widget _levelProgressCard() {
+    final entries = _levelProgressEntries();
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: accent.withValues(alpha: .35)),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topRight,
+            end: Alignment.bottomLeft,
+            colors: [Color(0xFF143545), Color(0xFF101827), panel],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.leaderboard_outlined, color: accent),
+                SizedBox(width: 8),
+                Expanded(child: Text('رتبه‌بندی بر اساس پیشرفت لول',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'اختلاف لول از قدیمی‌ترین تا جدیدترین رکورد ذخیره‌شدهٔ هر بازیکن محاسبه می‌شود.',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            if (entries.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: Text('برای ساخت رتبه‌بندی، ابتدا رکورد واقعی لول بازیکنان را ذخیره کن.',
+                  style: TextStyle(color: Colors.white60)),
+              ),
+            ...entries.asMap().entries.map((indexed) {
+              final index = indexed.key;
+              final entry = indexed.value;
+              final change = entry.levelChange;
+              final changeColor = change == null
+                  ? Colors.white54
+                  : change > 0
+                      ? accent
+                      : change < 0
+                          ? Colors.redAccent
+                          : Colors.amber;
+              final changeIcon = change == null
+                  ? Icons.more_time
+                  : change > 0
+                      ? Icons.trending_up
+                      : change < 0
+                          ? Icons.trending_down
+                          : Icons.trending_flat;
+              return Container(
+                margin: const EdgeInsets.only(top: 9),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF09131E).withValues(alpha: .75),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: const Color(0xFF214655),
+                      child: Text('${index + 1}', style: const TextStyle(color: accent, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(entry.nickname, maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 3),
+                          Text('لول فعلی: ${entry.currentLevel?.toString() ?? 'نامشخص'} • ${entry.snapshotCount} رکورد',
+                            style: const TextStyle(color: Colors.white60, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Column(
+                      children: [
+                        Icon(changeIcon, color: changeColor, size: 20),
+                        Text(change == null ? 'رکورد دوم لازم است' : '${change > 0 ? '+' : ''}$change لول',
+                          style: TextStyle(color: changeColor, fontSize: change == null ? 10 : 12, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _persistClips(List<Map<String, dynamic>> rows) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('raad.clips.v2', rows.map(jsonEncode).toList());
+    final encoded = rows.map(jsonEncode).toList();
+    final didWrite = await prefs.setStringList('raad.clips.v2', encoded);
+    final verified = prefs.getStringList('raad.clips.v2');
+    if (!didWrite ||
+        verified == null ||
+        verified.length != encoded.length ||
+        !List.generate(encoded.length, (index) => verified[index] == encoded[index]).every((same) => same)) {
+      throw StateError('ذخیرهٔ اطلاعات کتابخانهٔ کلیپ تأیید نشد.');
+    }
   }
 
   Future<void> _addClip() async {
@@ -379,47 +520,103 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _pickVideo() async {
+    String? targetPath;
+    var libraryEntryPersisted = false;
     try {
       final picked = await ImagePicker().pickVideo(source: ImageSource.gallery);
       if (picked == null) return;
       final source = File(picked.path);
-      if (!await source.exists()) { _toast('فایل ویدیو در دسترس نیست.'); return; }
-      final length = await source.length();
-      if (length <= 0 || length > 500 * 1024 * 1024) {
-        _toast('اندازهٔ ویدیو معتبر نیست یا از سقف ۵۰۰ مگابایت بیشتر است.'); return;
+      if (!await source.exists()) {
+        _toast('فایل ویدیوی انتخاب‌شده دیگر در دسترس نیست.');
+        return;
       }
-      final appDir = await getApplicationDocumentsDirectory();
-      final clipDir = Directory('${appDir.path}/raad_clips');
-      await clipDir.create(recursive: true);
-      final ext = picked.name.contains('.') ? '.${picked.name.split('.').last}' : '.mp4';
-      final targetPath = '${clipDir.path}/clip_${DateTime.now().millisecondsSinceEpoch}$ext';
-      await source.copy(targetPath);
-      if (!mounted) {
-        await File(targetPath).delete().catchError((_) => File(targetPath));
+      final sourceLength = await source.length();
+      if (sourceLength <= 0 || sourceLength > ClipStorageService.maxVideoSizeBytes) {
+        _toast('اندازهٔ ویدیو معتبر نیست یا از سقف ۵۰۰ مگابایت بیشتر است.');
         return;
       }
       final meta = await showDialog<Map<String, String>>(
         context: context,
         builder: (_) => _EditClipDialog(initialTitle: picked.name, initialDescription: ''),
       );
-      if (meta == null) {
-        await File(targetPath).delete().catchError((_) => File(targetPath));
-        return;
+      if (meta == null || !mounted) return;
+
+      var galleryAccess = false;
+      try {
+        galleryAccess = await Gal.hasAccess(toAlbum: true);
+        if (!galleryAccess) galleryAccess = await Gal.requestAccess(toAlbum: true);
+      } catch (_) {
+        galleryAccess = false;
       }
+      if (!galleryAccess) {
+        final savePrivately = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('اجازهٔ گالری داده نشد'),
+            content: const Text('برای کپی در گالری گوشی اجازه لازم است. می‌توانی ویدیو را فعلاً فقط در کتابخانهٔ خصوصی رعد ذخیره کنی.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('لغو')),
+              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('فقط داخل رعد')),
+            ],
+          ),
+        );
+        if (savePrivately != true || !mounted) return;
+      }
+
+      final appDir = await getApplicationDocumentsDirectory();
+      final destination = Directory('${appDir.path}/raad_clips');
+      final stored = await ClipStorageService.copyToDirectory(
+        sourcePath: picked.path,
+        destinationDirectory: destination,
+      );
+      targetPath = stored.path;
       final row = <String, dynamic>{
-        'type': 'video', 'path': targetPath,
+        'type': 'video',
+        'path': stored.path,
         'title': meta['title']!.trim().isEmpty ? picked.name : meta['title']!.trim(),
         'description': meta['description']!.trim(),
-        'created_at': DateTime.now().toIso8601String(), 'size_bytes': length,
+        'created_at': DateTime.now().toIso8601String(),
+        'size_bytes': stored.sizeBytes,
       };
       final next = [row, ..._clips];
       await _persistClips(next);
+      libraryEntryPersisted = true;
+
+      var gallerySaved = false;
+      String? galleryError;
+      if (galleryAccess) {
+        try {
+          await Gal.putVideo(stored.path, album: 'RAAD');
+          gallerySaved = true;
+        } on GalException catch (e) {
+          galleryError = e.type.message;
+        } catch (_) {
+          galleryError = 'ذخیره‌سازی در گالری انجام نشد.';
+        }
+      }
       if (!mounted) return;
       setState(() => _clips = next);
-      await _recordEvent('ویدیو از گالری به حافظهٔ خصوصی برنامه وارد شد.');
-      _toast('ویدیو روی همین گوشی ذخیره شد. این نسخه آپلود ابری ندارد.');
+      await _recordEvent(gallerySaved
+          ? 'ویدیو در کتابخانهٔ رعد و گالری گوشی ذخیره شد.'
+          : 'ویدیو در کتابخانهٔ خصوصی رعد ذخیره شد.');
+      if (gallerySaved) {
+        _toast('ویدیو ذخیره شد؛ هم در رعد و هم در آلبوم RAAD گالری گوشی.');
+      } else if (!galleryAccess) {
+        _toast('ویدیو داخل رعد ذخیره شد. اجازهٔ گالری داده نشد؛ فایل عمومی ساخته نشد.');
+      } else {
+        _toast('ویدیو داخل رعد ذخیره شد، اما کپی گالری موفق نبود: ${galleryError ?? 'خطای ناشناخته'}');
+      }
     } catch (e) {
-      _toast('واردکردن ویدیو ناموفق بود؛ اجازهٔ دسترسی به گالری و فضای خالی را بررسی کن.');
+      if (targetPath != null && !libraryEntryPersisted) {
+        try {
+          final file = File(targetPath);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
+      final detail = e is ClipStorageException
+          ? e.message
+          : 'دسترسی به فایل، فضای خالی و مجوز ذخیره‌سازی را بررسی کن.';
+      _toast('ذخیرهٔ کلیپ ناموفق بود. $detail');
     }
   }
 
@@ -510,34 +707,6 @@ class _RaadHomeState extends State<RaadHome> {
     if (!mounted) return;
     setState(() => _manualProfile = next);
     await _recordEvent('اطلاعات دستی پروفایل به‌روزرسانی شد.');
-  }
-
-  Future<void> _signInWithGoogle() async {
-    if (googleServerClientId.trim().isEmpty) {
-      _toast('ورود گوگل هنوز پیکربندی نشده است؛ شناسهٔ OAuth پروژه لازم است.');
-      return;
-    }
-    try {
-      final account = await GoogleSignIn(
-        serverClientId: googleServerClientId,
-        scopes: const ['email'],
-      ).signIn();
-      if (account == null) return;
-      if (!mounted) return;
-      setState(() => _googleUser = account);
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('raad.googleEmail.v1', account.email);
-      _toast('ورود به رعد انجام شد. برای پروفایل کالاف، نام داخل بازی یا UID را هم ثبت کن.');
-    } catch (_) {
-      _toast('ورود گوگل انجام نشد؛ تنظیمات OAuth و SHA-1 برنامه را بررسی کن.');
-    }
-  }
-
-  Future<void> _signOutGoogle() async {
-    try { await GoogleSignIn(serverClientId: googleServerClientId).signOut(); } catch (_) {}
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('raad.googleEmail.v1');
-    if (mounted) setState(() => _googleUser = null);
   }
 
   Future<void> _checkForUpdates() async {
@@ -631,7 +800,7 @@ class _RaadHomeState extends State<RaadHome> {
     child: Scaffold(
     appBar: AppBar(title: const Text('رعد ⚡', style: TextStyle(fontWeight: FontWeight.bold)),
       actions: [IconButton(icon: const Icon(Icons.info_outline), tooltip: 'دربارهٔ رعد', onPressed: () => showAboutDialog(
-        context: context, applicationName: 'رعد | RAAD', applicationVersion: '0.2.0',
+        context: context, applicationName: 'رعد | RAAD', applicationVersion: raadAppVersion,
         children: const [Text('اپ مستقل و غیررسمی برای نمایش فیلدهای قابل‌دسترسی پروفایل CODM.'), Text('رمز عبور بازی درخواست نمی‌شود.')]))]),
     drawer: Drawer(child: SafeArea(child: ListView(padding: EdgeInsets.zero, children: [
       const Padding(padding: EdgeInsets.all(20), child: Text('رَعد | RAAD\nنبض رنک، زیر نظر تو', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
@@ -693,7 +862,7 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _profilePage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('جست‌وجوی پروفایل'),
     const SizedBox(height: 8),
-    const Text('برای پیدا کردن پروفایل، نام دقیق داخل بازی یا UID را وارد کن. ورود Gmail به‌تنهایی اکانت کالاف را به API وصل نمی‌کند.', style: TextStyle(color: Colors.white60)),
+    const Text('برای پیدا کردن پروفایل، نام دقیق داخل بازی یا UID را وارد کن.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
     TextField(controller: _query, textDirection: TextDirection.ltr, onSubmitted: (_) => _search(),
       decoration: InputDecoration(hintText: 'نام بازیکن یا شناسه', prefixIcon: const Icon(Icons.search),
@@ -730,6 +899,8 @@ class _RaadHomeState extends State<RaadHome> {
     _heading('ردیاب رنک'),
     const SizedBox(height: 8),
     const Text('پروفایل را دریافت کن و هر بار رکورد ذخیره کن. روند فقط از رکوردهای واقعی که خودت ذخیره می‌کنی ساخته می‌شود؛ تاریخچهٔ گذشته جعل نمی‌شود.', style: TextStyle(color: Colors.white60)),
+    const SizedBox(height: 12),
+    _levelProgressCard(),
     const SizedBox(height: 12),
     _action(Icons.bookmark_add_outlined, 'ذخیرهٔ وضعیت فعلی', _profile == null ? 'ابتدا پروفایل دریافت کن' : _value(_profile, 'nickname'), _saveSnapshot),
     const SizedBox(height: 12), _heading('رکوردها (' + _rankHistory.length.toString() + ')'),
@@ -776,9 +947,9 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _clipsPage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('کلیپ‌های من'),
     const SizedBox(height: 8),
-    const Text('ویدیو را از انتخاب‌گر سیستمی اندروید وارد کن؛ معمولاً نیازی به اجازهٔ دسترسی کامل به همهٔ فایل‌های گوشی نیست. فایل انتخابی در فضای خصوصی برنامه روی همین گوشی ذخیره می‌شود؛ آپلود ابری در این نسخه فعال نیست.', style: TextStyle(color: Colors.white60)),
+    const Text('بعد از انتخاب ویدیو، اجازهٔ ذخیره در گالری درخواست می‌شود. فایل ابتدا در کتابخانهٔ خصوصی رعد کپی و اندازه‌اش بررسی می‌شود؛ در صورت موافقت، یک کپی هم در آلبوم RAAD گالری گوشی قرار می‌گیرد.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
-    FilledButton.icon(onPressed: _pickVideo, icon: const Icon(Icons.video_library_outlined), label: const Text('انتخاب ویدیو از گالری')),
+    FilledButton.icon(onPressed: _pickVideo, icon: const Icon(Icons.video_library_outlined), label: const Text('انتخاب و ذخیرهٔ ویدیو')),
     const SizedBox(height: 8),
     OutlinedButton.icon(onPressed: _addClip, icon: const Icon(Icons.add_link), label: const Text('افزودن لینک کلیپ')),
     const SizedBox(height: 10),
@@ -817,7 +988,7 @@ class _RaadHomeState extends State<RaadHome> {
     const SizedBox(height: 12),
     _action(Icons.edit_note_outlined, 'اطلاعات دستی پروفایل', 'ثبت یا اصلاح لول، رنک و امتیاز ناموجود', _editManualProfile),
     const SizedBox(height: 12),
-    _notice('اتصال کالاف', 'رعد از سرویس عمومی و غیررسمی برای جست‌وجوی نام یا UID استفاده می‌کند. ورود Google فقط ورود به رعد است و دسترسی خصوصی به اطلاعات Activision ایجاد نمی‌کند.'),
+    _notice('اتصال کالاف', 'رعد از سرویس عمومی و غیررسمی برای جست‌وجوی نام یا UID استفاده می‌کند. دسترسی خصوصی به اطلاعات Activision ایجاد نمی‌شود.'),
   ]);
 
   Widget _updatesPage() => ListView(padding: const EdgeInsets.all(18), children: [
@@ -849,7 +1020,7 @@ class _RaadHomeState extends State<RaadHome> {
     const SizedBox(height: 8),
     _notice('داده‌های محلی', 'تاریخچه، مقادیر دستی پروفایل و کلیپ‌های واردشده در حافظهٔ همین گوشی ذخیره می‌شوند. در نسخهٔ فعلی، فایل ویدیو به فضای ابری ارسال نمی‌شود.'),
     const SizedBox(height: 8),
-    _notice('حساب Google', 'ایمیل برای ورود به خود برنامه استفاده می‌شود، نه برای کشف خودکار پروفایل کالاف. هیچ‌وقت رمز عبور Activision یا Google را در فرم‌های داخل برنامه وارد نکن.'),
+    _notice('امنیت حساب‌ها', 'ورود Google در این نسخه حذف شده چون تنظیمات OAuth و امضای قابل‌آزمایش در مخزن موجود نبود. هیچ‌وقت رمز Google یا Activision را در فرم‌های این برنامه وارد نکن.'),
     const SizedBox(height: 12),
     TextButton.icon(onPressed: () => launchUrl(Uri.parse('https://github.com/Harry260/codm-api'), mode: LaunchMode.externalApplication),
       icon: const Icon(Icons.open_in_new), label: const Text('مستندات سرویس غیررسمی پروفایل')),
@@ -874,8 +1045,29 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _heading(String title) => Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
 
   Widget _action(IconData icon, String title, String subtitle, VoidCallback onTap) => Card(
-    color: panel, child: ListTile(onTap: onTap, leading: Icon(icon, color: accent),
-      title: Text(title), subtitle: Text(subtitle), trailing: const Icon(Icons.chevron_left)));
+    clipBehavior: Clip.antiAlias,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: accent.withValues(alpha: .12)),
+    ),
+    child: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.centerRight,
+          end: Alignment.centerLeft,
+          colors: [Color(0xFF132435), panel],
+        ),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: Icon(icon, color: accent),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_left, color: Colors.white54),
+      ),
+    ),
+  );
 
   List<Widget> _profileImages(Map<String, dynamic> p) {
     const imageFields = <String, String>{
@@ -961,21 +1153,33 @@ class _RaadHomeState extends State<RaadHome> {
     }).toList();
   }
 
-  Widget _accountCard() => Card(color: panel, child: ListTile(
-    leading: const CircleAvatar(backgroundColor: Color(0xFF173747), child: Icon(Icons.account_circle_outlined, color: accent)),
-    title: Text(_googleUser == null ? 'ورود به رعد با حساب Google' : 'حساب متصل‌شده'),
-    subtitle: Text(_googleUser?.email ?? 'برای فعال‌شدن ورود، OAuth گوگل باید تنظیم شود. این ورود به‌خودی‌خود کالاف را متصل نمی‌کند.'),
-    trailing: IconButton(
-      tooltip: _googleUser == null ? 'ورود با گوگل' : 'خروج از حساب',
-      icon: Icon(_googleUser == null ? Icons.login : Icons.logout),
-      onPressed: _googleUser == null ? _signInWithGoogle : _signOutGoogle,
+  Widget _accountCard() => Card(
+    color: panel,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: accent.withValues(alpha: .2)),
     ),
-  ));
+    child: const ListTile(
+      leading: CircleAvatar(backgroundColor: Color(0xFF173747), child: Icon(Icons.phone_android, color: accent)),
+      title: Text('حساب و اطلاعات محلی'),
+      subtitle: Text('ورود Google در این نسخه غیرفعال است؛ اطلاعات این برنامه روی همین دستگاه نگه‌داری می‌شود.'),
+    ),
+  );
 
-  Widget _profileCard(Map<String, dynamic> p) => Card(color: panel, child: ListTile(
-    leading: _avatar(p['picUrl']?.toString()),
-    title: Text(_value(p, 'nickname')),
-    subtitle: Text('لول: ' + _value(p, 'level') + ' • رنک: ' + _value(p, 'customReadableMpRank'))));
+  Widget _profileCard(Map<String, dynamic> p) => Card(
+    color: panel,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(18),
+      side: BorderSide(color: accent.withValues(alpha: .16)),
+    ),
+    child: ListTile(
+      leading: _avatar(p['picUrl']?.toString()),
+      title: Text(_value(p, 'nickname'), style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: Text('لول: ' + _value(p, 'level') + ' • رنک: ' + _value(p, 'customReadableMpRank')),
+    ),
+  );
 
   Widget _avatar(String? url) {
     if (url == null || url.trim().isEmpty) {
@@ -987,9 +1191,19 @@ class _RaadHomeState extends State<RaadHome> {
     ));
   }
 
-  Widget _field(String title, String value, IconData icon) => Card(color: panel, child: ListTile(
-    leading: Icon(icon, color: accent), title: Text(title),
-    subtitle: SelectableText(value, textDirection: TextDirection.ltr)));
+  Widget _field(String title, String value, IconData icon) => Card(
+    color: panel,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: BorderSide(color: accent.withValues(alpha: .1)),
+    ),
+    child: ListTile(
+      leading: Icon(icon, color: accent),
+      title: Text(title),
+      subtitle: SelectableText(value, textDirection: TextDirection.ltr),
+    ),
+  );
 
   Widget _playerHeader(Map<String, dynamic> p) => Container(
     padding: const EdgeInsets.all(12),
@@ -1170,6 +1384,19 @@ class _ManualProfileDialogState extends State<_ManualProfileDialog> {
           }), child: const Text('ذخیره')),
         ],
       );
+}
+
+class _LevelProgressEntry {
+  const _LevelProgressEntry({
+    required this.nickname,
+    required this.currentLevel,
+    required this.levelChange,
+    required this.snapshotCount,
+  });
+  final String nickname;
+  final int? currentLevel;
+  final int? levelChange;
+  final int snapshotCount;
 }
 
 class ClipPreviewPage extends StatefulWidget {
