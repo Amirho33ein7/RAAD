@@ -49,6 +49,10 @@ void main() {
 
     await openPage('تاریخچهٔ همگام‌سازی');
     expect(find.text('رخدادی ثبت نشده'), findsOneWidget);
+
+    await openPage('تنظیمات');
+    expect(find.text('ذخیرهٔ کلیپ در گالری گوشی'), findsOneWidget);
+    expect(find.text('درخواست دسترسی ذخیرهٔ کلیپ'), findsOneWidget);
   });
 
   testWidgets('saved player profiles can be reopened by their saved UID', (tester) async {
@@ -130,12 +134,7 @@ void main() {
   testWidgets('level leaderboard sorts players by saved level growth', (tester) async {
     SharedPreferences.setMockInitialValues({
       'raad.rankHistory.v1': [
-        jsonEncode({
-          'nickname': 'FastLeveler',
-          'shortId': 'FAST-1',
-          'level': 40,
-          'saved_at': '2026-10-20T12:00:00.000',
-        }),
+        // Intentionally unordered: leaderboard must use timestamps, not list order.
         jsonEncode({
           'nickname': 'FastLeveler',
           'shortId': 'FAST-1',
@@ -146,6 +145,12 @@ void main() {
           'nickname': 'SlowLeveler',
           'shortId': 'SLOW-1',
           'level': 17,
+          'saved_at': '2026-10-20T12:00:00.000',
+        }),
+        jsonEncode({
+          'nickname': 'FastLeveler',
+          'shortId': 'FAST-1',
+          'level': 40,
           'saved_at': '2026-10-20T12:00:00.000',
         }),
         jsonEncode({
