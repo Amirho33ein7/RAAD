@@ -51,8 +51,8 @@ void main() {
     expect(find.text('رخدادی ثبت نشده'), findsOneWidget);
 
     await openPage('تنظیمات');
-    expect(find.text('ذخیرهٔ کلیپ در گالری گوشی'), findsOneWidget);
-    expect(find.text('درخواست دسترسی ذخیرهٔ کلیپ'), findsOneWidget);
+    expect(find.text('ذخیرهٔ فایل کلیپ در فایل‌های گوشی'), findsOneWidget);
+    expect(find.text('درخواست / بررسی دسترسی ذخیرهٔ فایل'), findsOneWidget);
   });
 
   testWidgets('saved player profiles can be reopened by their saved UID', (tester) async {
