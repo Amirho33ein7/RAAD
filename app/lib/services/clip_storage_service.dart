@@ -41,10 +41,7 @@ class ClipStorageService {
 
     await destinationDirectory.create(recursive: true);
     final dot = sourcePath.lastIndexOf('.');
-    final slash = [
-      sourcePath.lastIndexOf('/'),
-      sourcePath.lastIndexOf(r'\\'),
-    ].reduce((a, b) => a > b ? a : b);
+    final slash = sourcePath.lastIndexOf(Platform.pathSeparator);
     final rawExtension = dot > slash && dot < sourcePath.length - 1
         ? sourcePath.substring(dot).toLowerCase()
         : '.mp4';
