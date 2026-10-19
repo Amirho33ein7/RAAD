@@ -513,7 +513,7 @@ class _RaadHomeState extends State<RaadHome> {
       actions: [IconButton(icon: const Icon(Icons.info_outline), tooltip: 'دربارهٔ رعد', onPressed: () => showAboutDialog(
         context: context, applicationName: 'رعد | RAAD', applicationVersion: '0.2.0',
         children: const [Text('اپ مستقل و غیررسمی برای نمایش فیلدهای قابل‌دسترسی پروفایل CODM.'), Text('رمز عبور بازی درخواست نمی‌شود.')]))]),
-    drawer: Drawer(child: SafeArea(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+    drawer: Drawer(child: SafeArea(child: ListView(padding: EdgeInsets.zero, children: [
       const Padding(padding: EdgeInsets.all(20), child: Text('رَعد | RAAD\nنبض رنک، زیر نظر تو', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
       const Divider(),
       _nav(Icons.dashboard_outlined, 'داشبورد', 0),
@@ -525,7 +525,7 @@ class _RaadHomeState extends State<RaadHome> {
       _nav(Icons.settings_outlined, 'تنظیمات', 6),
       _nav(Icons.system_update_alt, 'بررسی آپدیت', 7),
       _nav(Icons.privacy_tip_outlined, 'حریم خصوصی و دربارهٔ رعد', 8),
-      const Spacer(),
+      const SizedBox(height: 12),
       const Padding(padding: EdgeInsets.all(16), child: Text('رکوردها و لینک‌ها محلی هستند. سرور پروفایل، غیررسمی است.', style: TextStyle(color: Colors.white60, fontSize: 12))),
     ]))),
     body: SafeArea(child: AnimatedSwitcher(duration: const Duration(milliseconds: 180),
@@ -659,7 +659,7 @@ class _RaadHomeState extends State<RaadHome> {
       title: Text(clip['title']?.toString().isNotEmpty == true ? clip['title'].toString() : 'کلیپ بدون عنوان'),
       subtitle: Text([
         if ((clip['description']?.toString() ?? '').isNotEmpty) clip['description'].toString(),
-        clip['type'] == 'video' ? 'فایل ذخیره‌شده روی گوشی' : (clip['url']?.toString() ?? ''),
+        clip['type'] == 'video' ? 'فایل ذخیره‌شده روی گوشی' : 'لینک ذخیره‌شده روی دستگاه',
       ].join(' • ')),
       onTap: () => _openClipEntry(clip),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
