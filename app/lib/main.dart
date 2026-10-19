@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'http://10.0.2.2:8000');
+const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
+const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
 
@@ -64,20 +65,41 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<Map<String, dynamic>> _fetchProfile(String q) async {
-    final uri = Uri.parse('$backendBaseUrl/api/v1/codm/profile').replace(queryParameters: {'q': q});
+    final uri = useBackend
+        ? Uri.parse(backendBaseUrl + '/api/v1/codm/profile').replace(queryParameters: {'q': q})
+        : Uri.parse(backendBaseUrl + '/user/' + Uri.encodeComponent(q));
     final response = await http.get(uri, headers: const {'Accept': 'application/json'})
         .timeout(const Duration(seconds: 15));
     dynamic body;
-    try { body = jsonDecode(response.body); }
-    on FormatException { throw Exception('پاسخ سرور معتبر نیست.'); }
+    try {
+      body = jsonDecode(response.body);
+    } on FormatException {
+      throw Exception('پاسخ سرویس قابل‌خواندن نیست.');
+    }
     if (response.statusCode != 200) {
-      throw Exception(body is Map ? (body['detail']?.toString() ?? 'دریافت اطلاعات ناموفق بود.') : 'دریافت اطلاعات ناموفق بود.');
+      final detail = body is Map ? (body['detail'] ?? body['message']) : null;
+      throw Exception(detail?.toString() ?? 'سرویس پروفایل پاسخ خطا داد (HTTP ' + response.statusCode.toString() + ').');
     }
-    if (body is! Map) throw Exception('ساختار پاسخ سرور معتبر نیست.');
-    final result = Map<String, dynamic>.from(body);
-    if (!result.keys.any((k) => !['cache', 'data_source', 'retrieved_at_unix'].contains(k))) {
-      throw Exception('سرویس هیچ فیلد قابل‌نمایشی برنگرداند.');
+    if (body is! Map) throw Exception('ساختار پاسخ سرویس معتبر نیست.');
+    if (!useBackend && body['success'] == false) {
+      throw Exception(body['message']?.toString() ?? 'سرویس نتوانست این پروفایل را پیدا کند.');
     }
+
+    dynamic data = body;
+    if (!useBackend) data = body['data'] ?? body['user'] ?? body['profile'] ?? body;
+    if (data is! Map) throw Exception('دادهٔ پروفایل در پاسخ سرویس وجود ندارد.');
+    final raw = Map<String, dynamic>.from(data);
+    const allowed = <String>[
+      'nickname', 'level', 'picUrl', 'rankClass', 'customReadableMpRank',
+      'customMpRankImageUrl', 'rating', 'shortId', 'country', 'countryId',
+    ];
+    final result = <String, dynamic>{};
+    for (final field in allowed) {
+      if (raw[field] != null) result[field] = raw[field];
+    }
+    if (result.isEmpty) throw Exception('هیچ فیلد قابل‌نمایشی در پاسخ وجود ندارد.');
+    result['data_source'] = 'unofficial';
+    result['retrieved_at_unix'] = body['retrieved_at_unix'] ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
     return result;
   }
 
