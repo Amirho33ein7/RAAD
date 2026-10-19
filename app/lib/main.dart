@@ -403,11 +403,11 @@ class _RaadHomeState extends State<RaadHome> {
 
   Widget _field(String title, String value, IconData icon) => Card(color: panel, child: ListTile(
     leading: Icon(icon, color: accent), title: Text(title),
-    subtitle: SelectableText(value, textDirection: TextDirection.auto)));
+    subtitle: SelectableText(value, textDirection: TextDirection.ltr)));
 
   Widget _playerHeader(Map<String, dynamic> p) => Container(
     padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(14), border: Border.all(color: accent.withOpacity(.25))),
+    decoration: BoxDecoration(color: panel, borderRadius: BorderRadius.circular(14), border: Border.all(color: accent.withValues(alpha: .25))),
     child: Column(children: [const Icon(Icons.person_outline, color: accent, size: 26), const SizedBox(height: 6),
       Text(_value(p, 'nickname'), textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis)]));
 
@@ -433,7 +433,7 @@ class _RaadHomeState extends State<RaadHome> {
       Text(details, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60))]));
 
   Widget _notice(String title, String details, {Color color = accent}) => Container(
-    padding: const EdgeInsets.all(13), decoration: BoxDecoration(color: color.withOpacity(.08), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withOpacity(.15))),
+    padding: const EdgeInsets.all(13), decoration: BoxDecoration(color: color.withValues(alpha: .08), borderRadius: BorderRadius.circular(12), border: Border.all(color: color.withValues(alpha: .15))),
     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Icon(Icons.info_outline, color: color), const SizedBox(width: 10),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 4), Text(details)]))]));
 
