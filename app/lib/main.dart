@@ -581,6 +581,7 @@ class _RaadHomeState extends State<RaadHome> {
     OutlinedButton.icon(onPressed: _editManualProfile, icon: const Icon(Icons.edit_outlined), label: const Text('ویرایش دستی پروفایل و رنک')),
     if (_displayProfile != null) ...[
       const SizedBox(height: 18), _heading('اطلاعات پروفایل'), _profileCard(_displayProfile!),
+      ..._profileImages(_displayProfile!),
       ..._profileFields(_displayProfile!),
       const SizedBox(height: 8),
       FilledButton.tonalIcon(onPressed: _saveSnapshot, icon: const Icon(Icons.bookmark_add_outlined), label: const Text('ذخیرهٔ رکورد رنک')),
@@ -740,6 +741,30 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _action(IconData icon, String title, String subtitle, VoidCallback onTap) => Card(
     color: panel, child: ListTile(onTap: onTap, leading: Icon(icon, color: accent),
       title: Text(title), subtitle: Text(subtitle), trailing: const Icon(Icons.chevron_left)));
+
+  List<Widget> _profileImages(Map<String, dynamic> p) {
+    const imageFields = <String, String>{
+      'customLevelImageUrl': 'نشان لول',
+      'customMpRankImageUrl': 'نشان رنک مولتی‌پلیر',
+    };
+    return imageFields.entries.where((entry) {
+      final url = p[entry.key]?.toString() ?? '';
+      final uri = Uri.tryParse(url);
+      return uri != null && uri.hasAuthority && uri.scheme == 'https';
+    }).map((entry) => Card(
+      color: panel,
+      child: ListTile(
+        leading: Image.network(
+          p[entry.key].toString(),
+          width: 42,
+          height: 42,
+          fit: BoxFit.contain,
+          errorBuilder: (_, __, ___) => const Icon(Icons.image_not_supported_outlined, color: Colors.white54),
+        ),
+        title: Text(entry.value),
+      ),
+    )).toList();
+  }
 
   List<Widget> _profileFields(Map<String, dynamic> p) {
     const labels = <String, String>{
