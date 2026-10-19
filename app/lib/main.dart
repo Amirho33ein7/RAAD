@@ -12,7 +12,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.2.0+2';
+const String raadAppVersion = '0.3.0+3';
 const String googleServerClientId = String.fromEnvironment('RAAD_GOOGLE_SERVER_CLIENT_ID');
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
@@ -27,6 +27,7 @@ class RaadApp extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     title: 'رعد | RAAD',
     locale: const Locale('fa', 'IR'),
+    builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child ?? const SizedBox.shrink()),
     theme: ThemeData(useMaterial3: true, brightness: Brightness.dark,
       scaffoldBackgroundColor: const Color(0xFF080D16),
       colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark)),
@@ -50,7 +51,7 @@ class _RaadHomeState extends State<RaadHome> {
   Map<String, dynamic>? _profile, _otherProfile;
   Map<String, dynamic> _manualProfile = {};
   GoogleSignInAccount? _googleUser;
-  String? _profileQuery, _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
+  String? _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
@@ -138,9 +139,7 @@ class _RaadHomeState extends State<RaadHome> {
         _events = p.getStringList('raad.events.v1') ?? [];
         _manualProfile = parseStoredMap('raad.manualProfile.v1');
         _profile = cachedProfile;
-        _profileQuery = p.getString('raad.profileQuery.v1');
       });
-      await _checkForUpdates(quiet: true);
     } catch (_) {
       _recordEvent('بارگذاری اطلاعات محلی ناموفق بود.');
     }
@@ -163,11 +162,10 @@ class _RaadHomeState extends State<RaadHome> {
     try {
       final result = await _fetchProfile(q);
       if (!mounted) return;
-      setState(() { _profile = result; _profileQuery = q; });
+      setState(() => _profile = result);
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('raad.profileCache.v1', jsonEncode(result));
-        await prefs.setString('raad.profileQuery.v1', q);
       } catch (_) {}
       await _recordEvent('پروفایل ' + q + ' دریافت شد.');
     } catch (e) {
@@ -179,7 +177,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _compare() async {
     final q = _compareQuery.text.trim();
-    if (_profile == null) { setState(() => _compareError = 'ابتدا پروفایل اول را در بخش پروفایل دریافت کن.'); return; }
+    if (_displayProfile == null) { setState(() => _compareError = 'ابتدا پروفایل اول را در بخش پروفایل دریافت یا دستی ثبت کن.'); return; }
     if (q.isEmpty) { setState(() => _compareError = 'نام یا شناسهٔ بازیکن دوم را وارد کن.'); return; }
     setState(() { _compareLoading = true; _compareError = null; _otherProfile = null; });
     try {
@@ -418,9 +416,9 @@ class _RaadHomeState extends State<RaadHome> {
     if (mounted) setState(() => _googleUser = null);
   }
 
-  Future<void> _checkForUpdates({bool quiet = false}) async {
+  Future<void> _checkForUpdates() async {
     if (!mounted) return;
-    setState(() { _checkingUpdate = true; if (!quiet) _updateMessage = null; });
+    setState(() { _checkingUpdate = true; _updateMessage = null; });
     try {
       final response = await http.get(
         Uri.parse('https://api.github.com/repos/Amirho33ein7/RAAD/releases/latest'),
@@ -484,7 +482,11 @@ class _RaadHomeState extends State<RaadHome> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
-  void _go(int page) { Navigator.pop(context); setState(() => _page = page); }
+  void _go(int page) {
+    Navigator.pop(context);
+    setState(() => _page = page);
+    if (page == 7) _checkForUpdates();
+  }
 
   @override
   void dispose() {
@@ -554,7 +556,7 @@ class _RaadHomeState extends State<RaadHome> {
     _action(Icons.compare_arrows, 'مقایسهٔ بازیکنان', 'مقایسهٔ فیلدهای واقعی و مشترک', () => setState(() => _page = 3)),
     _action(Icons.video_library_outlined, 'کلیپ‌های من', _clips.length.toString() + ' مورد ذخیره‌شده', () => setState(() => _page = 4)),
     _action(Icons.person_outline, 'پروفایل من', 'نمایش داده‌های دریافت‌شده و ویرایش مقادیر ناموجود', () => setState(() => _page = 1)),
-    _action(Icons.system_update_alt, 'بررسی آپدیت', 'نسخهٔ جدید از GitHub Releases', () => setState(() => _page = 7)),
+    _action(Icons.system_update_alt, 'بررسی آپدیت', 'نسخهٔ جدید از GitHub Releases', () { setState(() => _page = 7); _checkForUpdates(); }),
     const SizedBox(height: 12),
     _accountCard(),
     if (_displayProfile != null) ...[const SizedBox(height: 16), _heading('آخرین پروفایل'), _profileCard(_displayProfile!)],
@@ -609,9 +611,11 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _comparePage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('مقایسهٔ دو پروفایل'),
     const SizedBox(height: 8),
-    const Text('ابتدا پروفایل اول را در بخش پروفایل دریافت کن. سپس نام یا شناسهٔ نفر دوم را جست‌وجو کن.', style: TextStyle(color: Colors.white60)),
+    const Text('پروفایل اول از بخش پروفایل یا اطلاعات دستی گرفته می‌شود. سپس بازیکن دوم را با نام یا UID جست‌وجو کن.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
-    if (_profile == null) _action(Icons.person_search, 'پروفایل اول را دریافت کن', 'رفتن به صفحهٔ پروفایل', () => setState(() => _page = 1)) else _profileCard(_profile!),
+    if (_displayProfile == null)
+      _action(Icons.person_search, 'پروفایل اول را ثبت کن', 'رفتن به بخش پروفایل', () => setState(() => _page = 1))
+    else _profileCard(_displayProfile!),
     const SizedBox(height: 12),
     TextField(controller: _compareQuery, textDirection: TextDirection.ltr, onSubmitted: (_) => _compare(),
       decoration: InputDecoration(hintText: 'شناسه یا نام بازیکن دوم', prefixIcon: const Icon(Icons.compare_arrows),
@@ -621,15 +625,15 @@ class _RaadHomeState extends State<RaadHome> {
       icon: _compareLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.compare),
       label: Text(_compareLoading ? 'در حال دریافت…' : 'دریافت و مقایسه')),
     if (_compareError != null) ...[const SizedBox(height: 10), _notice('خطا در مقایسه', _compareError!, color: Colors.redAccent)],
-    if (_profile != null && _otherProfile != null) ...[
+    if (_displayProfile != null && _otherProfile != null) ...[
       const SizedBox(height: 16),
-      Row(children: [Expanded(child: _playerHeader(_profile!)), const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.compare_arrows, color: accent)), Expanded(child: _playerHeader(_otherProfile!))]),
+      Row(children: [Expanded(child: _playerHeader(_displayProfile!)), const Padding(padding: EdgeInsets.all(8), child: Icon(Icons.compare_arrows, color: accent)), Expanded(child: _playerHeader(_otherProfile!))]),
       const SizedBox(height: 10),
-      _compareRow('لول', _profile!['level'], _otherProfile!['level']),
-      _compareRow('امتیاز رنک', _profile!['rating'], _otherProfile!['rating']),
-      _compareRow('رنک مولتی‌پلیر', _profile!['customReadableMpRank'], _otherProfile!['customReadableMpRank']),
-      _compareRow('کشور', _profile!['country'], _otherProfile!['country']),
-      _notice('نحوهٔ مقایسه', 'اختلاف عددی فقط زمانی محاسبه می‌شود که هر دو مقدار عددی و موجود باشند.'),
+      _compareRow('لول', _displayProfile!['level'], _otherProfile!['level']),
+      _compareRow('امتیاز رنک', _displayProfile!['rating'], _otherProfile!['rating']),
+      _compareRow('رنک مولتی‌پلیر', _displayProfile!['customReadableMpRank'], _otherProfile!['customReadableMpRank']),
+      _compareRow('کشور', _displayProfile!['country'], _otherProfile!['country']),
+      _notice('نحوهٔ مقایسه', 'مقادیر دستی پروفایل اول با برچسب دستی در رعد ذخیره می‌شوند. اختلاف عددی فقط زمانی محاسبه می‌شود که هر دو مقدار عددی و موجود باشند.'),
     ],
   ]);
 
@@ -651,7 +655,9 @@ class _RaadHomeState extends State<RaadHome> {
         clip['type'] == 'video' ? 'فایل ذخیره‌شده روی گوشی' : (clip['url']?.toString() ?? ''),
       ].join(' • ')),
       onTap: () => _openClipEntry(clip),
-      trailing: PopupMenuButton<String>(
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(tooltip: 'حذف', onPressed: () => _removeClip(clip), icon: const Icon(Icons.delete_outline)),
+        PopupMenuButton<String>(
         tooltip: 'عملیات کلیپ',
         onSelected: (value) {
           if (value == 'open') _openClipEntry(clip);
@@ -664,6 +670,7 @@ class _RaadHomeState extends State<RaadHome> {
           PopupMenuItem(value: 'delete', child: Text('حذف')),
         ],
       ),
+      ]),
     ))),
   ]);
 
@@ -683,7 +690,8 @@ class _RaadHomeState extends State<RaadHome> {
     _notice('نسخهٔ نصب‌شده', raadAppVersion),
     const SizedBox(height: 12),
     if (_checkingUpdate) const Center(child: Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())),
-    if (_updateMessage != null) _notice('وضعیت آپدیت', _updateMessage!, color: _updateApkUrl != null && _isNewerVersion(_latestTag ?? '', raadAppVersion) ? accent : Colors.white70),
+    if (_updateMessage != null) _notice('وضعیت آپدیت', _updateMessage!, color: _updateApkUrl != null && _isNewerVersion(_latestTag ?? '', raadAppVersion) ? accent : Colors.white70)
+    else const Text('برای بررسی آخرین نسخه، دکمهٔ زیر را بزن.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
     FilledButton.icon(onPressed: _checkingUpdate ? null : () => _checkForUpdates(),
       icon: const Icon(Icons.refresh), label: const Text('بررسی دوبارهٔ نسخهٔ جدید')),
