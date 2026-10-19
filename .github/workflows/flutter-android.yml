@@ -72,9 +72,7 @@ jobs:
 
       - name: Build release APK
         working-directory: app
-        env:
-          RAAD_GOOGLE_SERVER_CLIENT_ID: ${{ secrets.RAAD_GOOGLE_SERVER_CLIENT_ID }}
-        run: flutter build apk --release --no-pub --dart-define=RAAD_GOOGLE_SERVER_CLIENT_ID="$RAAD_GOOGLE_SERVER_CLIENT_ID"
+        run: flutter build apk --release --no-pub
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
