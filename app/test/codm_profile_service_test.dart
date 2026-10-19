@@ -161,6 +161,36 @@ void main() {
       service.close();
     });
 
+
+    test('reports server errors even when the body is not JSON', () async {
+      final service = CodmProfileService(
+        baseUrl: 'https://provider.example',
+        useBackend: false,
+        client: MockClient((_) async => http.Response('<html>temporarily unavailable</html>', 503)),
+      );
+      await expectLater(
+        service.fetchProfile('Player'),
+        throwsA(isA<ProfileApiException>()
+          .having((e) => e.statusCode, 'statusCode', 503)
+          .having((e) => e.message, 'message', contains('503'))),
+      );
+      service.close();
+    });
+
+    test('accepts profile wrapper keys only when their value is an object', () async {
+      final service = CodmProfileService(
+        baseUrl: 'https://provider.example',
+        useBackend: false,
+        client: MockClient((_) async => http.Response(
+          jsonEncode({'success': true, 'data': 'not-an-object', 'nickname': 'TopLevelPlayer'}),
+          200,
+        )),
+      );
+      final result = await service.fetchProfile('Player');
+      expect(result['nickname'], 'TopLevelPlayer');
+      service.close();
+    });
+
     test('applies timeout to a stalled response', () async {
       final neverCompletes = Completer<http.Response>();
       final service = CodmProfileService(
