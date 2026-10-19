@@ -55,7 +55,9 @@ class _RaadHomeState extends State<RaadHome> {
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
+  List<Map<String, dynamic>> _savedPlayers = [];
   List<Map<String, dynamic>> _clips = [];
+  String? _profileQuery;
   List<String> _events = [];
 
   Map<String, dynamic>? get _displayProfile {
@@ -136,6 +138,16 @@ class _RaadHomeState extends State<RaadHome> {
         return <String, dynamic>{};
       }
 
+      final savedRows = <Map<String, dynamic>>[];
+      for (final raw in p.getStringList('raad.savedPlayers.v1') ?? <String>[]) {
+        try {
+          final value = jsonDecode(raw);
+          if (value is Map && value['profile'] is Map && value['query'] != null) {
+            savedRows.add(Map<String, dynamic>.from(value));
+          }
+        } catch (_) {}
+      }
+
       Map<String, dynamic>? cachedProfile;
       try {
         final decoded = jsonDecode(p.getString('raad.profileCache.v1') ?? '');
@@ -144,10 +156,14 @@ class _RaadHomeState extends State<RaadHome> {
       if (!mounted) return;
       setState(() {
         _rankHistory = rows;
+        _savedPlayers = savedRows;
         _clips = clipRows;
         _events = p.getStringList('raad.events.v1') ?? [];
         _manualProfile = parseStoredMap('raad.manualProfile.v1');
         _profile = cachedProfile;
+        _profileQuery = p.getString('raad.lastProfileQuery.v1') ??
+            cachedProfile?['shortId']?.toString() ?? cachedProfile?['nickname']?.toString();
+        _query.text = _profileQuery ?? '';
       });
     } catch (_) {
       _recordEvent('بارگذاری اطلاعات محلی ناموفق بود.');
@@ -167,14 +183,15 @@ class _RaadHomeState extends State<RaadHome> {
   Future<void> _search() async {
     final q = _query.text.trim();
     if (q.isEmpty) { setState(() => _error = 'نام یا شناسهٔ بازیکن را وارد کن.'); return; }
-    setState(() { _loading = true; _error = null; });
+    setState(() { _loading = true; _error = null; _profile = null; _profileQuery = q; });
     try {
       final result = await _fetchProfile(q);
       if (!mounted) return;
-      setState(() => _profile = result);
+      setState(() { _profile = result; _profileQuery = q; });
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('raad.profileCache.v1', jsonEncode(result));
+        await prefs.setString('raad.lastProfileQuery.v1', q);
       } catch (_) {}
       await _recordEvent('پروفایل ' + q + ' دریافت شد.');
     } catch (e) {
@@ -182,6 +199,100 @@ class _RaadHomeState extends State<RaadHome> {
       if (mounted) setState(() => _error = message);
       await _recordEvent('دریافت پروفایل ' + q + ' ناموفق بود: ' + message);
     } finally { if (mounted) setState(() => _loading = false); }
+  }
+
+  Future<void> _persistSavedPlayers(List<Map<String, dynamic>> rows) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('raad.savedPlayers.v1', rows.map(jsonEncode).toList());
+  }
+
+  String _savedPlayerIdentity(Map<String, dynamic> row) {
+    final rawProfile = row['profile'];
+    if (rawProfile is Map) {
+      final profile = Map<String, dynamic>.from(rawProfile);
+      final id = profile['shortId']?.toString().trim() ?? '';
+      if (id.isNotEmpty) return 'id:${id.toLowerCase()}';
+      final nickname = profile['nickname']?.toString().trim() ?? '';
+      if (nickname.isNotEmpty) return 'name:${nickname.toLowerCase()}';
+    }
+    final query = row['query']?.toString().trim().toLowerCase() ?? '';
+    return 'query:$query';
+  }
+
+  Future<void> _saveCurrentPlayer() async {
+    final profile = _profile;
+    if (profile == null) {
+      _toast('اول بازیکن را با نام داخل بازی یا UID جست‌وجو کن.');
+      return;
+    }
+    var query = (_profileQuery ?? _query.text).trim();
+    if (query.isEmpty) {
+      query = (profile['shortId'] ?? profile['nickname'] ?? '').toString().trim();
+    }
+    if (query.isEmpty) {
+      _toast('شناسهٔ بازیکن در دسترس نیست؛ نام یا UID را دوباره وارد کن.');
+      return;
+    }
+    final row = <String, dynamic>{
+      'query': query,
+      'nickname': profile['nickname']?.toString() ?? query,
+      'shortId': profile['shortId']?.toString() ?? '',
+      'profile': Map<String, dynamic>.from(profile),
+      'saved_at': DateTime.now().toIso8601String(),
+    };
+    final identity = _savedPlayerIdentity(row);
+    final next = List<Map<String, dynamic>>.from(_savedPlayers);
+    final index = next.indexWhere((item) => _savedPlayerIdentity(item) == identity);
+    if (index >= 0) {
+      row['saved_at'] = next[index]['saved_at'] ?? row['saved_at'];
+      next.removeAt(index);
+    }
+    next.insert(0, row);
+    if (next.length > 100) next.removeRange(100, next.length);
+    try {
+      await _persistSavedPlayers(next);
+      if (!mounted) return;
+      setState(() => _savedPlayers = next);
+      final playerName = row['nickname']?.toString() ?? query;
+      await _recordEvent('پروفایل $playerName با شناسهٔ جست‌وجوشده ذخیره شد.');
+      _toast(index >= 0 ? 'پروفایل ذخیره‌شده به‌روزرسانی شد.' : 'بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.');
+    } catch (_) {
+      _toast('ذخیرهٔ پروفایل انجام نشد؛ فضای خالی دستگاه را بررسی کن.');
+    }
+  }
+
+  Future<void> _openSavedPlayer(Map<String, dynamic> saved) async {
+    final raw = saved['profile'];
+    if (raw is! Map) {
+      _toast('اطلاعات این پروفایل ذخیره‌شده معتبر نیست.');
+      return;
+    }
+    final profile = Map<String, dynamic>.from(raw);
+    final query = saved['query']?.toString() ?? saved['shortId']?.toString() ?? '';
+    if (!mounted) return;
+    setState(() {
+      _profile = profile;
+      _profileQuery = query;
+      _query.text = query;
+      _error = null;
+      _page = 1;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('raad.profileCache.v1', jsonEncode(profile));
+      await prefs.setString('raad.lastProfileQuery.v1', query);
+    } catch (_) {}
+  }
+
+  Future<void> _removeSavedPlayer(Map<String, dynamic> saved) async {
+    final next = _savedPlayers.where((item) => !identical(item, saved)).toList();
+    try {
+      await _persistSavedPlayers(next);
+      if (mounted) setState(() => _savedPlayers = next);
+      _toast('پروفایل از فهرست ذخیره‌شده‌ها حذف شد.');
+    } catch (_) {
+      _toast('حذف پروفایل ذخیره‌شده انجام نشد.');
+    }
   }
 
   Future<void> _compare() async {
@@ -594,10 +705,19 @@ class _RaadHomeState extends State<RaadHome> {
     if (_error != null) ...[const SizedBox(height: 10), _notice('دریافت ناموفق بود', _error!, color: Colors.redAccent)],
     const SizedBox(height: 12),
     OutlinedButton.icon(onPressed: _editManualProfile, icon: const Icon(Icons.edit_outlined), label: const Text('ویرایش دستی پروفایل و رنک')),
+    const SizedBox(height: 18),
+    _heading('بازیکنان ذخیره‌شده (${_savedPlayers.length})'),
+    const SizedBox(height: 8),
+    if (_savedPlayers.isEmpty) _empty(Icons.bookmarks_outlined, 'هنوز بازیکنی ذخیره نشده', 'بعد از جست‌وجوی موفق با نام یا UID، گزینهٔ «ذخیرهٔ این بازیکن» را بزن.'),
+    ..._savedPlayers.map(_savedPlayerTile),
     if (_displayProfile != null) ...[
       const SizedBox(height: 18), _heading('اطلاعات پروفایل'), _profileCard(_displayProfile!),
       ..._profileImages(_displayProfile!),
       ..._profileFields(_displayProfile!),
+      if (_profile != null) ...[
+        const SizedBox(height: 8),
+        FilledButton.tonalIcon(onPressed: _saveCurrentPlayer, icon: const Icon(Icons.bookmark_add_outlined), label: const Text('ذخیرهٔ این بازیکن')),
+      ],
       const SizedBox(height: 8),
       FilledButton.tonalIcon(onPressed: _saveSnapshot, icon: const Icon(Icons.bookmark_add_outlined), label: const Text('ذخیرهٔ رکورد رنک')),
       const SizedBox(height: 10),
@@ -656,7 +776,7 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _clipsPage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('کلیپ‌های من'),
     const SizedBox(height: 8),
-    const Text('می‌توانی ویدیو را از گالری وارد کنی یا لینک کلیپ اضافه کنی. فایل‌های ویدیویی فعلاً به‌صورت محلی و خصوصی روی همین گوشی ذخیره می‌شوند؛ فضای ابری فعال نیست.', style: TextStyle(color: Colors.white60)),
+    const Text('ویدیو را از انتخاب‌گر سیستمی اندروید وارد کن؛ معمولاً نیازی به اجازهٔ دسترسی کامل به همهٔ فایل‌های گوشی نیست. فایل انتخابی در فضای خصوصی برنامه روی همین گوشی ذخیره می‌شود؛ آپلود ابری در این نسخه فعال نیست.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
     FilledButton.icon(onPressed: _pickVideo, icon: const Icon(Icons.video_library_outlined), label: const Text('انتخاب ویدیو از گالری')),
     const SizedBox(height: 8),
@@ -781,6 +901,42 @@ class _RaadHomeState extends State<RaadHome> {
     )).toList();
   }
 
+  Widget _savedPlayerTile(Map<String, dynamic> saved) {
+    final rawProfile = saved['profile'];
+    final profile = rawProfile is Map
+        ? Map<String, dynamic>.from(rawProfile)
+        : <String, dynamic>{};
+    final nickname = profile['nickname']?.toString().trim() ?? '';
+    final query = saved['query']?.toString() ?? '';
+    final shortId = profile['shortId']?.toString().trim() ?? '';
+    final searchId = query.isNotEmpty ? query : 'در دسترس نیست';
+    final otherId = shortId.isNotEmpty ? '\nشناسهٔ پروفایل: $shortId' : '';
+    return Card(
+      color: panel,
+      child: ListTile(
+        onTap: () => _openSavedPlayer(saved),
+        leading: const Icon(Icons.bookmark, color: accent),
+        title: Text(nickname.isNotEmpty ? nickname : searchId),
+        subtitle: Text('شناسهٔ جست‌وجو: $searchId$otherId'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'بازکردن پروفایل ذخیره‌شده',
+              onPressed: () => _openSavedPlayer(saved),
+              icon: const Icon(Icons.open_in_new),
+            ),
+            IconButton(
+              tooltip: 'حذف پروفایل ذخیره‌شده',
+              onPressed: () => _removeSavedPlayer(saved),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<Widget> _profileFields(Map<String, dynamic> p) {
     const labels = <String, String>{
       'nickname': 'نام بازیکن', 'level': 'لول', 'customReadableMpRank': 'رنک مولتی‌پلیر',
@@ -794,9 +950,14 @@ class _RaadHomeState extends State<RaadHome> {
       'countryId': Icons.public,
     };
     final keys = ['nickname', 'level', 'customReadableMpRank', 'rating', 'rankClass', 'shortId', 'country', 'countryId'];
-    return keys.where((key) => p[key] != null && p[key].toString().trim().isNotEmpty).map((key) {
-      final manual = _manualProfile.containsKey(key);
-      return _field((labels[key] ?? key) + (manual ? ' • ثبت دستی' : ''), _display(p[key]), icons[key] ?? Icons.info_outline);
+    final manualName = _manualProfile['nickname']?.toString().trim().toLowerCase() ?? '';
+    final profileName = p['nickname']?.toString().trim().toLowerCase() ?? '';
+    final manualValuesApply = _profile == null ||
+        (manualName.isNotEmpty && profileName.isNotEmpty && manualName == profileName);
+    return keys.map((key) {
+      final manual = manualValuesApply && _manualProfile.containsKey(key);
+      return _field((labels[key] ?? key) + (manual ? ' • ثبت دستی' : ''),
+          _display(p[key]), icons[key] ?? Icons.info_outline);
     }).toList();
   }
 

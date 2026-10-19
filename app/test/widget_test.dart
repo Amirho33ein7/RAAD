@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,6 +49,46 @@ void main() {
 
     await openPage('تاریخچهٔ همگام‌سازی');
     expect(find.text('رخدادی ثبت نشده'), findsOneWidget);
+  });
+
+  testWidgets('saved player profiles can be reopened by their saved UID', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'raad.savedPlayers.v1': [
+        jsonEncode({
+          'query': 'UID-12345',
+          'nickname': 'NightOwl',
+          'shortId': 'ID-7788',
+          'profile': {
+            'nickname': 'NightOwl',
+            'level': 88,
+            'customReadableMpRank': 'Master III',
+            'rating': 5420,
+            'shortId': 'ID-7788',
+            'country': 'US',
+          },
+          'saved_at': '2026-10-20T12:00:00.000',
+        }),
+      ],
+    });
+
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('پروفایل کالاف'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('بازیکنان ذخیره‌شده (1)'), findsOneWidget);
+    expect(find.text('NightOwl'), findsOneWidget);
+    await tester.tap(find.byTooltip('بازکردن پروفایل ذخیره‌شده'));
+    await tester.pumpAndSettle();
+
+    final searchField = tester.widget<TextField>(find.byType(TextField).first);
+    expect(searchField.controller?.text, 'UID-12345');
+    expect(find.text('Master III'), findsOneWidget);
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
