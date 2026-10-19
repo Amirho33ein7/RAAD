@@ -8,9 +8,9 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
-import 'package:gal/gal.dart';
 import 'services/clip_storage_service.dart';
 import 'services/app_version.dart';
+import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
@@ -18,6 +18,7 @@ const String raadAppVersion = '0.4.1+5';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
+const MethodChannel _fileStorageChannel = MethodChannel('raad/file_storage');
 
 void main() => runApp(const RaadApp());
 
@@ -53,8 +54,9 @@ class _RaadHomeState extends State<RaadHome> {
   Map<String, dynamic> _manualProfile = {};
   String? _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
-  bool _requestingClipAccess = false;
-  bool? _clipGalleryAccess;
+  bool _requestingFileAccess = false;
+  bool _fileAccessReady = false;
+  String? _fileAccessMessage;
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
   List<Map<String, dynamic>> _savedPlayers = [];
@@ -86,74 +88,52 @@ class _RaadHomeState extends State<RaadHome> {
   void initState() {
     super.initState();
     _loadLocal();
-    // Ask for gallery-saving access as soon as the first screen is ready.
+    // Prepare file-manager saving as soon as the app launches.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _requestClipStorageAccess(startup: true);
+      if (Platform.isAndroid) _ensureFileSavingAccess(startup: true);
     });
   }
 
-  Future<void> _requestClipStorageAccess({bool startup = false}) async {
-    if (!mounted || _requestingClipAccess) return;
-    // Gallery access is a mobile feature; skip platform-channel permission
-    // calls on desktop/test hosts where the native plugin is not registered.
-    if (startup && !Platform.isAndroid && !Platform.isIOS) return;
-
-    if (startup) {
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final alreadyPrompted =
-            prefs.getBool('raad.clipGalleryAccessPrompted.v1') ?? false;
-        if (alreadyPrompted) {
-          final currentAccess = await Gal.hasAccess(toAlbum: true);
-          if (mounted) setState(() => _clipGalleryAccess = currentAccess);
-          return;
-        }
-        await prefs.setBool('raad.clipGalleryAccessPrompted.v1', true);
-      } catch (_) {
-        // A permission attempt is still made if the local preference fails.
-      }
+  Future<bool> _ensureFileSavingAccess({bool startup = false}) async {
+    if (!Platform.isAndroid) {
+      if (!startup) _toast('ذخیرهٔ فایل عمومی در نسخهٔ اندروید فعال است.');
+      return false;
     }
+    if (_requestingFileAccess) return _fileAccessReady;
+    if (mounted) setState(() => _requestingFileAccess = true);
 
-    setState(() => _requestingClipAccess = true);
     var granted = false;
-    String? failure;
+    String message = '';
     try {
-      granted = await Gal.hasAccess(toAlbum: true);
-      if (!granted) granted = await Gal.requestAccess(toAlbum: true);
+      final response = await _fileStorageChannel.invokeMapMethod<String, dynamic>(
+        'ensureAccess',
+      );
+      granted = response?['granted'] == true;
+      message = response?['message']?.toString() ??
+          (granted
+              ? 'محل ذخیرهٔ فایل: Download/RAAD'
+              : 'مجوز ذخیرهٔ فایل صادر نشد.');
+    } on PlatformException catch (error) {
+      message = error.message ?? 'بررسی مجوز ذخیرهٔ فایل ناموفق بود.';
+    } on MissingPluginException {
+      message = 'بخش ذخیرهٔ فایل اندروید در این بیلد موجود نیست.';
     } catch (error) {
-      failure = error.toString();
+      message = 'بررسی دسترسی فایل ناموفق بود: $error';
     }
 
-    if (!mounted) return;
-    setState(() {
-      _clipGalleryAccess = granted;
-      _requestingClipAccess = false;
-    });
-
-    // On current Android versions, the system photo picker and MediaStore
-    // may not require a broad storage permission. Do not request all-files access.
-    if (startup) return;
-    if (granted) {
-      _toast('دسترسی ذخیرهٔ کلیپ در گالری آماده است.');
-      return;
+    if (mounted) {
+      setState(() {
+        _fileAccessReady = granted;
+        _fileAccessMessage = message;
+        _requestingFileAccess = false;
+      });
     }
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('دسترسی ذخیرهٔ کلیپ'),
-        content: Text(
-          failure == null
-              ? 'مجوز ذخیره در گالری صادر نشد. می‌توانی کلیپ را داخل کتابخانهٔ رعد ذخیره کنی؛ برای ذخیره در گالری، مجوز عکس‌ها و ویدیوها/ذخیره‌سازی رعد را در تنظیمات اندروید بررسی کن.'
-              : 'بررسی مجوز گالری با خطا روبه‌رو شد. کلیپ داخل رعد همچنان قابل ذخیره است. جزئیات: $failure',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('متوجه شدم'),
-          ),
-        ],
-      ),
-    );
+    if (!startup) {
+      _toast(granted
+          ? 'ذخیرهٔ فایل آماده است: Download/RAAD'
+          : message);
+    }
+    return granted;
   }
 
   Future<void> _loadLocal() async {
@@ -602,9 +582,14 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _pickVideo() async {
-    String? targetPath;
+    String? privateTargetPath;
+    String? publicFileUri;
     var libraryEntryPersisted = false;
+
     try {
+      final accessReady = await _ensureFileSavingAccess();
+      if (!accessReady || !mounted) return;
+
       final picked = await ImagePicker().pickVideo(source: ImageSource.gallery);
       if (picked == null) return;
       final source = File(picked.path);
@@ -613,51 +598,66 @@ class _RaadHomeState extends State<RaadHome> {
         return;
       }
       final sourceLength = await source.length();
-      if (sourceLength <= 0 || sourceLength > ClipStorageService.maxVideoSizeBytes) {
+      if (sourceLength <= 0 ||
+          sourceLength > ClipStorageService.maxVideoSizeBytes) {
         _toast('اندازهٔ ویدیو معتبر نیست یا از سقف ۵۰۰ مگابایت بیشتر است.');
         return;
       }
       if (!mounted) return;
+
       final meta = await showDialog<Map<String, String>>(
         context: context,
-        builder: (_) => _EditClipDialog(initialTitle: picked.name, initialDescription: ''),
+        builder: (_) => _EditClipDialog(
+          initialTitle: picked.name,
+          initialDescription: '',
+        ),
       );
       if (meta == null || !mounted) return;
 
-      var galleryAccess = false;
-      try {
-        galleryAccess = await Gal.hasAccess(toAlbum: true);
-        if (!galleryAccess) galleryAccess = await Gal.requestAccess(toAlbum: true);
-      } catch (_) {
-        galleryAccess = false;
-      }
-      if (!mounted) return;
-      if (!galleryAccess) {
-        final savePrivately = await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: const Text('اجازهٔ گالری داده نشد'),
-            content: const Text('برای کپی در گالری گوشی اجازه لازم است. می‌توانی ویدیو را فعلاً فقط در کتابخانهٔ خصوصی رعد ذخیره کنی.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('لغو')),
-              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('فقط داخل رعد')),
-            ],
-          ),
-        );
-        if (savePrivately != true || !mounted) return;
-      }
-
       final appDir = await getApplicationDocumentsDirectory();
-      final destination = Directory('${appDir.path}/raad_clips');
       final stored = await ClipStorageService.copyToDirectory(
         sourcePath: picked.path,
-        destinationDirectory: destination,
+        destinationDirectory: Directory('${appDir.path}/raad_clips'),
       );
-      targetPath = stored.path;
+      privateTargetPath = stored.path;
+
+      final extension = RegExp(r'\.([A-Za-z0-9]{1,8})$')
+              .firstMatch(picked.name)
+              ?.group(1)
+              ?.toLowerCase() ??
+          'mp4';
+      final publicName =
+          'raad_clip_${DateTime.now().millisecondsSinceEpoch}.$extension';
+
+      final publicResult = await _fileStorageChannel.invokeMapMethod<String, dynamic>(
+        'saveVideo',
+        <String, dynamic>{
+          'sourcePath': stored.path,
+          'fileName': publicName,
+        },
+      );
+      publicFileUri = publicResult?['uri']?.toString();
+      final publicBytes = int.tryParse(publicResult?['bytes']?.toString() ?? '');
+      final publicPath = publicResult?['displayPath']?.toString();
+      if (publicFileUri == null ||
+          publicFileUri!.isEmpty ||
+          publicBytes != stored.sizeBytes ||
+          publicPath == null ||
+          publicPath.isEmpty) {
+        throw StateError(
+          'ذخیرهٔ عمومی فایل تأیید نشد؛ اندازه یا مسیر فایل معتبر نیست.',
+        );
+      }
+
       final row = <String, dynamic>{
         'type': 'video',
         'path': stored.path,
-        'title': meta['title']!.trim().isEmpty ? picked.name : meta['title']!.trim(),
+        'public_uri': publicFileUri,
+        'public_path': publicPath,
+        'file_name': publicName,
+        'title': meta['title']!.trim().isEmpty
+            ? picked.name
+            : meta['title']!.trim(),
         'description': meta['description']!.trim(),
         'created_at': DateTime.now().toIso8601String(),
         'size_bytes': stored.sizeBytes,
@@ -665,42 +665,36 @@ class _RaadHomeState extends State<RaadHome> {
       final next = [row, ..._clips];
       await _persistClips(next);
       libraryEntryPersisted = true;
-
-      var gallerySaved = false;
-      String? galleryError;
-      if (galleryAccess) {
-        try {
-          await Gal.putVideo(stored.path, album: 'RAAD');
-          gallerySaved = true;
-        } on GalException catch (e) {
-          galleryError = e.type.message;
-        } catch (_) {
-          galleryError = 'ذخیره‌سازی در گالری انجام نشد.';
-        }
-      }
       if (!mounted) return;
+
       setState(() => _clips = next);
-      await _recordEvent(gallerySaved
-          ? 'ویدیو در کتابخانهٔ رعد و گالری گوشی ذخیره شد.'
-          : 'ویدیو در کتابخانهٔ خصوصی رعد ذخیره شد.');
-      if (gallerySaved) {
-        _toast('ویدیو ذخیره شد؛ هم در رعد و هم در آلبوم RAAD گالری گوشی.');
-      } else if (!galleryAccess) {
-        _toast('ویدیو داخل رعد ذخیره شد. اجازهٔ گالری داده نشد؛ فایل عمومی ساخته نشد.');
-      } else {
-        _toast('ویدیو داخل رعد ذخیره شد، اما کپی گالری موفق نبود: ${galleryError ?? 'خطای ناشناخته'}');
-      }
-    } catch (e) {
-      if (targetPath != null && !libraryEntryPersisted) {
+      await _recordEvent(
+        'فایل کلیپ در پوشهٔ $publicPath ذخیره و اندازهٔ آن تأیید شد.',
+      );
+      _toast(
+        'کلیپ به‌صورت فایل واقعی ذخیره شد: $publicPath',
+      );
+    } catch (error) {
+      if (!libraryEntryPersisted && publicFileUri != null) {
         try {
-          final file = File(targetPath);
+          await _fileStorageChannel.invokeMethod<bool>(
+            'deleteSavedVideo',
+            <String, dynamic>{'uri': publicFileUri},
+          );
+        } catch (_) {}
+      }
+      if (privateTargetPath != null && !libraryEntryPersisted) {
+        try {
+          final file = File(privateTargetPath);
           if (await file.exists()) await file.delete();
         } catch (_) {}
       }
-      final detail = e is ClipStorageException
-          ? e.message
-          : 'دسترسی به فایل، فضای خالی و مجوز ذخیره‌سازی را بررسی کن.';
-      _toast('ذخیرهٔ کلیپ ناموفق بود. $detail');
+      final detail = error is ClipStorageException
+          ? error.message
+          : error is PlatformException
+              ? (error.message ?? 'ذخیره در فایل‌های عمومی گوشی ناموفق بود.')
+              : error.toString();
+      _toast('کلیپ در فایل‌های گوشی ذخیره نشد. $detail');
     }
   }
 
@@ -727,7 +721,19 @@ class _RaadHomeState extends State<RaadHome> {
   Future<void> _removeClip(Map<String, dynamic> clip) async {
     final next = _clips.where((item) => !identical(item, clip)).toList();
     if (clip['type'] == 'video' && clip['path'] is String) {
-      try { final file = File(clip['path'] as String); if (await file.exists()) await file.delete(); } catch (_) {}
+      try {
+        final file = File(clip['path'] as String);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      final publicUri = clip['public_uri']?.toString();
+      if (publicUri != null && publicUri.isNotEmpty) {
+        try {
+          await _fileStorageChannel.invokeMethod<bool>(
+            'deleteSavedVideo',
+            <String, dynamic>{'uri': publicUri},
+          );
+        } catch (_) {}
+      }
     }
     await _persistClips(next);
     if (mounted) setState(() => _clips = next);
@@ -1083,7 +1089,7 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _clipsPage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('کلیپ‌های من'),
     const SizedBox(height: 8),
-    const Text('بعد از انتخاب ویدیو، اجازهٔ ذخیره در گالری درخواست می‌شود. فایل ابتدا در کتابخانهٔ خصوصی رعد کپی و اندازه‌اش بررسی می‌شود؛ در صورت موافقت، یک کپی هم در آلبوم RAAD گالری گوشی قرار می‌گیرد.', style: TextStyle(color: Colors.white60)),
+    const Text('ویدیو بعد از تأیید، به‌صورت فایل واقعی در پوشهٔ Download/RAAD ذخیره می‌شود و از برنامهٔ «مدیریت فایل» گوشی قابل‌مشاهده است. یک کپی خصوصی هم برای پخش داخل رعد نگه‌داری می‌شود.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 12),
     FilledButton.icon(onPressed: _pickVideo, icon: const Icon(Icons.video_library_outlined), label: const Text('انتخاب و ذخیرهٔ ویدیو')),
     const SizedBox(height: 8),
@@ -1095,7 +1101,9 @@ class _RaadHomeState extends State<RaadHome> {
       title: Text(clip['title']?.toString().isNotEmpty == true ? clip['title'].toString() : 'کلیپ بدون عنوان'),
       subtitle: Text([
         if ((clip['description']?.toString() ?? '').isNotEmpty) clip['description'].toString(),
-        clip['type'] == 'video' ? 'فایل ذخیره‌شده روی گوشی' : 'لینک ذخیره‌شده روی دستگاه',
+        clip['type'] == 'video'
+            ? 'فایل گوشی: ${clip['public_path']?.toString() ?? 'Download/RAAD'}'
+            : 'لینک ذخیره‌شده روی دستگاه',
       ].join(' • ')),
       onTap: () => _openClipEntry(clip),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1135,39 +1143,40 @@ class _RaadHomeState extends State<RaadHome> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Row(children: [
-              Icon(Icons.video_library_outlined, color: accent),
+              Icon(Icons.folder_open_outlined, color: accent),
               SizedBox(width: 8),
-              Expanded(child: Text('ذخیرهٔ کلیپ در گالری گوشی',
+              Expanded(child: Text('ذخیرهٔ فایل کلیپ در فایل‌های گوشی',
                 style: TextStyle(fontWeight: FontWeight.bold))),
             ]),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
-              _clipGalleryAccess == true
-                  ? 'وضعیت بررسی‌شده: دسترسی گالری آماده است.'
-                  : _requestingClipAccess
-                      ? 'در حال بررسی و درخواست مجوز...'
-                      : 'برای ذخیرهٔ کلیپ در گالری، مجوز را درخواست یا دوباره بررسی کن. انتخاب ویدیو از پنجرهٔ امن اندروید انجام می‌شود.',
+              _requestingFileAccess
+                  ? 'در حال بررسی دسترسی ذخیرهٔ فایل...'
+                  : _fileAccessReady
+                      ? 'وضعیت: آمادهٔ ذخیره در پوشهٔ Download/RAAD'
+                      : (_fileAccessMessage ??
+                          'رعد فایل‌های کلیپ را در پوشهٔ Download/RAAD می‌سازد؛ این فایل‌ها در برنامهٔ مدیریت فایل گوشی دیده می‌شوند.'),
               style: const TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: _requestingClipAccess
+                onPressed: _requestingFileAccess
                     ? null
-                    : () => _requestClipStorageAccess(),
-                icon: _requestingClipAccess
+                    : () => _ensureFileSavingAccess(),
+                icon: _requestingFileAccess
                     ? const SizedBox(width: 18, height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.folder_open_outlined),
-                label: Text(_requestingClipAccess
+                    : const Icon(Icons.folder_open),
+                label: Text(_requestingFileAccess
                     ? 'در حال بررسی...'
-                    : 'درخواست دسترسی ذخیرهٔ کلیپ'),
+                    : 'درخواست / بررسی دسترسی ذخیرهٔ فایل'),
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             const Text(
-              'رعد فقط مجوز لازم برای ذخیرهٔ ویدیو در گالری را می‌خواهد؛ دسترسی گستردهٔ همهٔ فایل‌های گوشی لازم نیست. کلیپ‌ها علاوه بر این در کتابخانهٔ خصوصی رعد نگه‌داری می‌شوند.',
+              'در اندروید 10 به بالا، برای ساخت فایل در Download/RAAD از دسترسی امن سیستم استفاده می‌شود و مجوز گستردهٔ تمام فایل‌های گوشی لازم نیست. در اندرویدهای قدیمی‌تر، مجوز ذخیره‌سازی هنگام اجرا درخواست می‌شود.',
               style: TextStyle(color: Colors.white54, fontSize: 12),
             ),
           ],
