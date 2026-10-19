@@ -35,6 +35,7 @@ class CodmProfileService {
     'nickname',
     'level',
     'picUrl',
+    'pic',
     'avatarUrl',
     'rankClass',
     'customReadableMpRank',
@@ -170,6 +171,7 @@ class CodmProfileService {
     }
     result.remove('countryCode');
     result.remove('avatarUrl');
+    result.remove('pic');
     result.remove('type');
     result.remove('result');
 
