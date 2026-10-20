@@ -13,10 +13,12 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    testStoreDirectory =
+    final directory =
         await Directory.systemTemp.createTemp('raad-widget-state-');
-    LocalPersistenceService.directoryProviderOverride =
-        () async => testStoreDirectory!;
+    testStoreDirectory = directory;
+    // Capture this test's immutable directory; never let a late async write
+    // from a previous widget test follow the mutable outer variable.
+    LocalPersistenceService.directoryProviderOverride = () async => directory;
   });
 
   tearDown(() async {
