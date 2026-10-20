@@ -24,7 +24,10 @@ const MethodChannel _fileStorageChannel = MethodChannel('raad/file_storage');
 void main() => runApp(const RaadApp());
 
 class RaadApp extends StatelessWidget {
-  const RaadApp({super.key});
+  const RaadApp({super.key, this.persistence});
+
+  /// Optional injected store for deterministic tests; production uses app-private storage.
+  final LocalPersistenceService? persistence;
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -34,12 +37,14 @@ class RaadApp extends StatelessWidget {
     theme: ThemeData(useMaterial3: true, brightness: Brightness.dark,
       scaffoldBackgroundColor: const Color(0xFF080D16),
       colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark)),
-    home: const RaadHome(),
+    home: RaadHome(persistence: persistence),
   );
 }
 
 class RaadHome extends StatefulWidget {
-  const RaadHome({super.key});
+  const RaadHome({super.key, this.persistence});
+
+  final LocalPersistenceService? persistence;
   @override
   State<RaadHome> createState() => _RaadHomeState();
 }
@@ -66,7 +71,8 @@ class _RaadHomeState extends State<RaadHome> {
   // a slow first load can overwrite the only recoverable copy with stale state.
   bool _externalBackupInitialized = false;
   bool _localReady = false;
-  final LocalPersistenceService _localStore = LocalPersistenceService();
+  late final LocalPersistenceService _localStore =
+      widget.persistence ?? LocalPersistenceService();
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
   List<Map<String, dynamic>> _savedPlayers = [];
