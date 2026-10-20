@@ -77,6 +77,31 @@ class LocalPersistenceService {
     return operation;
   }
 
+  /// Migrates legacy values without clobbering a value saved after loading began.
+  /// Missing keys are filled; empty keys are filled only when the recovered
+  /// value has data. The queued operation re-reads the latest file at execution.
+  Future<void> mergeMissingOrEmpty(Map<String, dynamic> values) {
+    bool hasData(Object? value) {
+      if (value is List) return value.isNotEmpty;
+      if (value is Map) return value.isNotEmpty;
+      if (value is String) return value.trim().isNotEmpty;
+      return value != null;
+    }
+
+    final operation = _writeQueue.then((_) async {
+      final current = await _readUnqueued() ?? <String, dynamic>{};
+      for (final entry in values.entries) {
+        if (!current.containsKey(entry.key) ||
+            (!hasData(current[entry.key]) && hasData(entry.value))) {
+          current[entry.key] = entry.value;
+        }
+      }
+      await _writeAtomically(current);
+    });
+    _writeQueue = operation.catchError((Object _) {});
+    return operation;
+  }
+
   Future<void> _writeAtomically(Map<String, dynamic> values) async {
     final main = await _dataFile;
     final temp = File('${main.path}.tmp');
