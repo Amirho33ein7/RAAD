@@ -309,7 +309,9 @@ void main() {
     expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
 
-    final deleteButton = find.byTooltip('حذف').first;
+    final deleteButton = find.byKey(
+      const ValueKey<String>('raad-delete-clip-url:https://example.com/my-clip'),
+    );
     await tester.ensureVisible(deleteButton);
     await tester.tap(deleteButton);
     await tester.pumpAndSettle();

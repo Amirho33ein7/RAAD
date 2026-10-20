@@ -1575,7 +1575,12 @@ class _RaadHomeState extends State<RaadHome> {
       ].join(' • ')),
       onTap: () => _openClipEntry(clip),
       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        IconButton(tooltip: 'حذف', onPressed: () => _removeClip(clip), icon: const Icon(Icons.delete_outline)),
+        IconButton(
+          key: ValueKey<String>('raad-delete-clip-${_clipIdentity(clip)}'),
+          tooltip: 'حذف',
+          onPressed: () => _removeClip(clip),
+          icon: const Icon(Icons.delete_outline),
+        ),
         PopupMenuButton<String>(
         tooltip: 'عملیات کلیپ',
         onSelected: (value) {
