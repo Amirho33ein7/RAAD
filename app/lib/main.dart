@@ -15,10 +15,10 @@ import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.5+9';
+const String raadAppVersion = '0.4.6+10';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
-const accent = Color(0xFF55E6F2);
-const panel = Color(0xFF111827);
+const accent = Color(0xFFD6F35A);
+const panel = Color(0xFF171B12);
 const MethodChannel _fileStorageChannel = MethodChannel('raad/file_storage');
 
 void main() => runApp(const RaadApp());
@@ -35,8 +35,18 @@ class RaadApp extends StatelessWidget {
     locale: const Locale('fa', 'IR'),
     builder: (context, child) => Directionality(textDirection: TextDirection.rtl, child: child ?? const SizedBox.shrink()),
     theme: ThemeData(useMaterial3: true, brightness: Brightness.dark,
-      scaffoldBackgroundColor: const Color(0xFF080D16),
-      colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark)),
+      scaffoldBackgroundColor: const Color(0xFF080A07),
+      colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Color(0xFF0F120B),
+      foregroundColor: accent,
+      centerTitle: true,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+    ),
+    dividerColor: const Color(0xFF333B22),
+    visualDensity: VisualDensity.standard,
+  ),
     home: RaadHome(persistence: persistence),
   );
 }
@@ -60,6 +70,7 @@ class _RaadHomeState extends State<RaadHome> {
   Map<String, dynamic> _manualProfile = {};
   String? _error, _compareError, _updateMessage, _updateApkUrl, _latestTag;
   bool _loading = false, _compareLoading = false, _checkingUpdate = false;
+  bool _backupInProgress = false;
   bool _requestingFileAccess = false;
   bool _fileAccessReady = false;
   String? _fileAccessMessage;
@@ -161,7 +172,7 @@ class _RaadHomeState extends State<RaadHome> {
         builder: (dialogContext) => AlertDialog(
           title: const Text('برای ذخیرهٔ فایل اجازه بده'),
           content: Text(
-            '$message\n\nیک پوشهٔ قابل‌دسترسی مثل Documents را در پنجرهٔ سیستمی انتخاب کن. رعد پوشهٔ RAAD را داخل آن می‌سازد و فایل‌های کلیپ را همان‌جا قرار می‌دهد.',
+            '$message\n\nیک پوشه مثل Documents را انتخاب کن. اگر نسخهٔ قبلی را نصب مجدد می‌کنی، همان پوشهٔ قبلی را انتخاب کن تا پشتیبان و کلیپ‌ها بازیابی شوند.',
           ),
           actions: [
             TextButton(
@@ -308,7 +319,7 @@ class _RaadHomeState extends State<RaadHome> {
     return merged;
   }
 
-  Future<void> _syncExternalBackup({bool fromRestore = false}) {
+  Future<void> _syncExternalBackup({bool fromRestore = false, bool verify = false}) {
     if (!Platform.isAndroid ||
         !_fileAccessReady ||
         (!_externalBackupInitialized && !fromRestore) ||
@@ -317,14 +328,71 @@ class _RaadHomeState extends State<RaadHome> {
     }
     final operation = _backupWriteQueue.then((_) async {
       final state = await _localStore.read();
-      if (state == null) return;
-      await _fileStorageChannel.invokeMethod<bool>(
+      if (state == null) {
+        if (verify) {
+          throw const FileSystemException(
+            'اطلاعات محلی برای ساخت پشتیبان خوانده نشد.',
+          );
+        }
+        return;
+      }
+      final encoded = jsonEncode(state);
+      final written = await _fileStorageChannel.invokeMethod<bool>(
         'writeBackup',
-        <String, dynamic>{'json': jsonEncode(state)},
+        <String, dynamic>{'json': encoded},
       );
+      if (written != true) {
+        if (verify) {
+          throw const FileSystemException('نوشتن فایل پشتیبان تأیید نشد.');
+        }
+        return;
+      }
+      if (verify) {
+        final readBack = await _fileStorageChannel.invokeMethod<String>(
+          'readBackup',
+        );
+        if (readBack != encoded) {
+          throw const FileSystemException(
+            'محتوای پشتیبان پس از ذخیره با اطلاعات محلی تطابق ندارد.',
+          );
+        }
+      }
     });
     _backupWriteQueue = operation.catchError((Object _) {});
-    return operation.catchError((Object _) {});
+    return verify ? operation : operation.catchError((Object _) {});
+  }
+
+  Future<void> _backupNow() async {
+    if (!Platform.isAndroid) {
+      _toast('پشتیبان‌گیری بیرونی در نسخهٔ اندروید در دسترس است.');
+      return;
+    }
+    if (_backupInProgress) return;
+    if (mounted) setState(() => _backupInProgress = true);
+    try {
+      final granted = await _ensureFileSavingAccess();
+      if (!granted) {
+        throw StateError(
+          'پوشهٔ قبلی را انتخاب کن؛ تا تأیید پشتیبان، برنامه را حذف نکن.',
+        );
+      }
+      await _ensureLocalReady();
+      if (!_externalBackupInitialized) {
+        await _restoreExternalBackup();
+      }
+      await _syncExternalBackup(verify: true);
+      if (mounted) {
+        _toast(
+          'پشتیبان نوشته و دوباره خوانده شد. برای بازیابی پس از نصب مجدد، همین پوشه را دوباره انتخاب کن.',
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        _toast('پشتیبان تأیید نشد؛ برنامه را حذف نکن. $error');
+      }
+    } finally {
+      if (mounted) setState(() => _backupInProgress = false);
+    }
   }
 
   Future<void> _loadLocal() async {
@@ -1411,7 +1479,7 @@ class _RaadHomeState extends State<RaadHome> {
         context: context, applicationName: 'رعد | RAAD', applicationVersion: raadAppVersion,
         children: const [Text('اپ مستقل و غیررسمی برای نمایش فیلدهای قابل‌دسترسی پروفایل CODM.'), Text('رمز عبور بازی درخواست نمی‌شود.')]))]),
     drawer: Drawer(child: SafeArea(child: ListView(padding: EdgeInsets.zero, children: [
-      const Padding(padding: EdgeInsets.all(20), child: Text('رَعد | RAAD\nنبض رنک، زیر نظر تو', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+      const Padding(padding: EdgeInsets.all(20), child: Text('رعد | RAAD\nاتاق عملیات بازیکن', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
       const Divider(),
       _nav(Icons.dashboard_outlined, 'داشبورد', 0),
       _nav(Icons.person_search_outlined, 'پروفایل کالاف', 1),
@@ -1422,8 +1490,6 @@ class _RaadHomeState extends State<RaadHome> {
       _nav(Icons.settings_outlined, 'تنظیمات', 6),
       _nav(Icons.system_update_alt, 'بررسی آپدیت', 7),
       _nav(Icons.privacy_tip_outlined, 'حریم خصوصی و دربارهٔ رعد', 8),
-      const SizedBox(height: 12),
-      const Padding(padding: EdgeInsets.all(16), child: Text('رکوردها و لینک‌ها محلی هستند. سرور پروفایل، غیررسمی است.', style: TextStyle(color: Colors.white60, fontSize: 12))),
     ]))),
     body: SafeArea(child: AnimatedSwitcher(duration: const Duration(milliseconds: 180),
       child: KeyedSubtree(key: ValueKey<int>(_page), child: _body()))),
@@ -1462,13 +1528,12 @@ class _RaadHomeState extends State<RaadHome> {
 
   Widget _dashboard() => ListView(padding: const EdgeInsets.all(18), children: [
     Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(
-      gradient: const LinearGradient(colors: [Color(0xFF102D3C), Color(0xFF111827)]),
-      borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFF2C6674))),
+      gradient: const LinearGradient(colors: [Color(0xFF212719), Color(0xFF171B12)]),
+      borderRadius: BorderRadius.circular(22), border: Border.all(color: const Color(0xFF68713A))),
       child: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('مرکز فرماندهی بازیکن', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        Text('مرکز عملیات رعد', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         SizedBox(height: 8),
-        Text('پروفایل قابل‌دسترسی را ببین، رکورد رنک بساز و دو پروفایل را کنار هم بررسی کن.', style: TextStyle(color: Colors.white70)),
-        SizedBox(height: 12), Text('رعد مستقل است و محصول رسمی Activision نیست.', style: TextStyle(color: accent, fontSize: 12)),
+        Text('پروفایل، رنک و کلیپ‌ها؛ همه در یک پنل.', style: TextStyle(color: Colors.white70)),
       ])),
     const SizedBox(height: 20), _heading('دسترسی سریع'),
     _action(Icons.person_search, 'جست‌وجوی پروفایل', 'نام یا شناسهٔ بازیکن', () => setState(() => _page = 1)),
@@ -1478,10 +1543,9 @@ class _RaadHomeState extends State<RaadHome> {
     _action(Icons.person_outline, 'پروفایل من', 'نمایش داده‌های دریافت‌شده و ویرایش مقادیر ناموجود', () => setState(() => _page = 1)),
     _action(Icons.system_update_alt, 'بررسی آپدیت', 'نسخهٔ جدید از GitHub Releases', () { setState(() => _page = 7); _checkForUpdates(); }),
     const SizedBox(height: 12),
-    _accountCard(),
     if (_displayProfile != null) ...[const SizedBox(height: 16), _heading('آخرین پروفایل'), _profileCard(_displayProfile!)],
     const SizedBox(height: 12),
-    _notice('حریم خصوصی', 'رمز عبور بازی را وارد نکن. تاریخچه و لینک‌ها روی همین دستگاه ذخیره می‌شوند.'),
+    _notice('حریم خصوصی', 'رمز بازی را وارد نکن؛ اطلاعات محلی را از تنظیمات پشتیبان بگیر.'),
   ]);
 
   Widget _profilePage() => ListView(padding: const EdgeInsets.all(18), children: [
@@ -1669,8 +1733,25 @@ class _RaadHomeState extends State<RaadHome> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'هنگام اولین اجرا پنجرهٔ رسمی انتخاب پوشه باز می‌شود؛ یک پوشه مثل Documents را انتخاب و «استفاده از این پوشه» را تأیید کن. رعد داخلش پوشهٔ RAAD می‌سازد، مجوز را برای دفعات بعد حفظ می‌کند و فایل‌های ویدیو همراه پشتیبان پروفایل در آن ذخیره می‌شوند.',
+              'اگر قبلاً نصب مجدد کرده‌ای، همان پوشهٔ قبلی را انتخاب کن تا پشتیبان و کلیپ‌ها پیدا شوند.',
               style: TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _backupInProgress ? null : _backupNow,
+                icon: _backupInProgress
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.verified_user_outlined),
+                label: Text(_backupInProgress
+                    ? 'در حال بررسی پشتیبان…'
+                    : 'پشتیبان‌گیری و تأیید اطلاعات'),
+              ),
             ),
           ],
         ),
@@ -1700,8 +1781,6 @@ class _RaadHomeState extends State<RaadHome> {
     const SizedBox(height: 8),
     TextButton.icon(onPressed: () => launchUrl(Uri.parse(githubReleasesPage), mode: LaunchMode.externalApplication),
       icon: const Icon(Icons.open_in_new), label: const Text('مشاهدهٔ همهٔ نسخه‌ها در GitHub')),
-    const SizedBox(height: 8),
-    _notice('روش انتشار', 'نسخهٔ جدید زمانی در این صفحه دیده می‌شود که صاحب پروژه یک نسخهٔ GitHub Release با تگ نسخه و فایل APK منتشر کند.'),
   ]);
 
   Widget _privacyPage() => ListView(padding: const EdgeInsets.all(18), children: [
@@ -1720,7 +1799,6 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _eventsPage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('تاریخچهٔ همگام‌سازی'),
     const SizedBox(height: 8),
-    const Text('رخدادهای محلی نمایش داده می‌شوند؛ این فهرست به معنی به‌روزرسانی خودکار پس‌زمینه نیست.', style: TextStyle(color: Colors.white60)),
     const SizedBox(height: 10),
     if (_events.isEmpty) _empty(Icons.history, 'رخدادی ثبت نشده', 'بعد از دریافت پروفایل یا ذخیره‌سازی، رویداد اینجا نمایش داده می‌شود.'),
     ..._events.map((event) => Card(color: panel, child: ListTile(leading: const Icon(Icons.history, color: accent), title: Text(event)))),
@@ -1752,7 +1830,7 @@ class _RaadHomeState extends State<RaadHome> {
         gradient: LinearGradient(
           begin: Alignment.centerRight,
           end: Alignment.centerLeft,
-          colors: [Color(0xFF132435), panel],
+          colors: [Color(0xFF202519), panel],
         ),
       ),
       child: ListTile(
@@ -1857,7 +1935,7 @@ class _RaadHomeState extends State<RaadHome> {
       side: BorderSide(color: accent.withValues(alpha: .2)),
     ),
     child: const ListTile(
-      leading: CircleAvatar(backgroundColor: Color(0xFF173747), child: Icon(Icons.phone_android, color: accent)),
+      leading: CircleAvatar(backgroundColor: Color(0xFF29311B), child: Icon(Icons.phone_android, color: accent)),
       title: Text('حساب و اطلاعات محلی'),
       subtitle: Text('ورود Google در این نسخه غیرفعال است؛ اطلاعات این برنامه روی همین دستگاه نگه‌داری می‌شود.'),
     ),
@@ -1879,9 +1957,9 @@ class _RaadHomeState extends State<RaadHome> {
 
   Widget _avatar(String? url) {
     if (url == null || url.trim().isEmpty) {
-      return const CircleAvatar(backgroundColor: Color(0xFF173747), child: Icon(Icons.person_outline, color: accent));
+      return const CircleAvatar(backgroundColor: Color(0xFF29311B), child: Icon(Icons.person_outline, color: accent));
     }
-    return CircleAvatar(backgroundColor: const Color(0xFF173747), child: ClipOval(
+    return CircleAvatar(backgroundColor: const Color(0xFF29311B), child: ClipOval(
       child: Image.network(url, width: 44, height: 44, fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => const Icon(Icons.person_outline, color: accent)),
     ));
