@@ -59,7 +59,7 @@ class _RaadHomeState extends State<RaadHome> {
   bool _fileAccessReady = false;
   String? _fileAccessMessage;
   String? _fileAccessFolderName;
-  late final Future<void> _localLoadFuture;
+  late Future<void> _localLoadFuture;
   Future<void> _backupWriteQueue = Future<void>.value();
   bool _restoringExternalBackup = false;
   // Do not write the external backup until it has been read and merged. Otherwise
@@ -202,7 +202,8 @@ class _RaadHomeState extends State<RaadHome> {
       final internal = await _localStore.read() ?? <String, dynamic>{};
       final merged = _mergeBackupData(internal, external);
       await _localStore.saveAll(merged);
-      await _loadLocal();
+      _localLoadFuture = _loadLocal();
+      await _localLoadFuture;
       await _syncExternalBackup(fromRestore: true);
       _externalBackupInitialized = true;
     } catch (error) {
@@ -321,6 +322,9 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _loadLocal() async {
+    if (mounted && _localReady) {
+      setState(() => _localReady = false);
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final durable = await _localStore.read() ?? <String, dynamic>{};
@@ -455,7 +459,6 @@ class _RaadHomeState extends State<RaadHome> {
       if (!mounted) return;
       final cached = cachedProfile.isEmpty ? null : cachedProfile;
       setState(() {
-        _localReady = true;
         _rankHistory = rows;
         _savedPlayers = savedRows;
         _clips = clipRows;
@@ -473,10 +476,14 @@ class _RaadHomeState extends State<RaadHome> {
       try {
         await _localStore.mergeMissingOrEmpty(loadedState);
         await _syncExternalBackup();
+        if (mounted) setState(() => _localReady = true);
       } catch (error) {
         if (mounted) {
-          setState(() => _fileAccessMessage =
-              'پروفایل‌ها نمایش داده شدند، اما نوشتن فایل پایدار کامل نشد: $error');
+          setState(() {
+            _localReady = true;
+            _fileAccessMessage =
+                'پروفایل‌ها نمایش داده شدند، اما نوشتن فایل پایدار کامل نشد: $error';
+          });
         }
       }
     } catch (error) {
