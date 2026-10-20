@@ -159,10 +159,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final saveButton = find.text('ذخیرهٔ این بازیکن');
-    await pumpUntilFound(tester, saveButton);
-    expect(saveButton, findsOneWidget);
-    await tester.ensureVisible(saveButton);
+    await tester.scrollUntilVisible(
+      saveButton,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
+    expect(saveButton, findsOneWidget);
     await tester.tap(saveButton);
     await tester.pumpAndSettle();
     final savedMessage = find.text('بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.');
@@ -208,9 +211,15 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'https://example.com/my-clip');
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
-    await pumpUntilFound(tester, find.text('https://example.com/my-clip'));
+    final savedClipLink = find.text('https://example.com/my-clip');
+    await tester.scrollUntilVisible(
+      savedClipLink,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
 
-    expect(find.text('https://example.com/my-clip'), findsOneWidget);
+    expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
 
     await tester.tap(find.byTooltip('حذف'));
