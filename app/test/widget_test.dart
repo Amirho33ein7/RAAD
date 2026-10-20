@@ -159,6 +159,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final saveButton = find.text('ذخیرهٔ این بازیکن');
+    await pumpUntilFound(tester, saveButton);
     await tester.scrollUntilVisible(
       saveButton,
       220,
