@@ -248,14 +248,14 @@ void main() {
       reason: 'the stored profile must remain after restart without SharedPreferences',
     );
 
-    final countLabel = find.text('بازیکنان ذخیره‌شده (1)');
+    final countLabel = find.text('بازیکنان ذخیره‌شده (1)').first;
     await tester.scrollUntilVisible(
       countLabel,
       220,
       scrollable: find.byType(Scrollable).first,
     );
     expect(countLabel, findsOneWidget);
-    final savedName = find.text('NightOwl');
+    final savedName = find.text('NightOwl').first;
     await tester.scrollUntilVisible(
       savedName,
       220,
@@ -309,7 +309,9 @@ void main() {
     expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
 
-    await tester.tap(find.byTooltip('حذف'));
+    final deleteButton = find.byTooltip('حذف').first;
+    await tester.ensureVisible(deleteButton);
+    await tester.tap(deleteButton);
     await tester.pumpAndSettle();
     final clipsAfterDelete = await waitForDurableData(
       tester,

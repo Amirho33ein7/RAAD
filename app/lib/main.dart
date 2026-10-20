@@ -1076,9 +1076,20 @@ class _RaadHomeState extends State<RaadHome> {
     if (mounted) setState(() => _clips = next);
   }
 
+  String _clipIdentity(Map<String, dynamic> clip) {
+    for (final field in ['public_uri', 'url', 'file_name', 'path']) {
+      final value = clip[field]?.toString().trim();
+      if (value != null && value.isNotEmpty) return '$field:$value';
+    }
+    return 'created_at:${clip['created_at'] ?? ''}:title:${clip['title'] ?? ''}';
+  }
+
   Future<void> _removeClip(Map<String, dynamic> clip) async {
     await _ensureLocalReady();
-    final next = _clips.where((item) => !identical(item, clip)).toList();
+    final identity = _clipIdentity(clip);
+    final next = _clips
+        .where((item) => _clipIdentity(item) != identity)
+        .toList();
     if (clip['type'] == 'video' && clip['path'] is String) {
       try {
         final file = File(clip['path'] as String);
