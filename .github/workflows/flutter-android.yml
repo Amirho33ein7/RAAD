@@ -625,12 +625,136 @@ jobs:
         working-directory: app
         run: flutter test --no-pub
 
+      - name: Configure persistent release signing
+        id: signing
+        working-directory: app
+        shell: bash
+        env:
+          RAAD_KEYSTORE_BASE64: ${{ secrets.RAAD_KEYSTORE_BASE64 }}
+          RAAD_KEYSTORE_PASSWORD: ${{ secrets.RAAD_KEYSTORE_PASSWORD }}
+          RAAD_KEY_ALIAS: ${{ secrets.RAAD_KEY_ALIAS }}
+          RAAD_KEY_PASSWORD: ${{ secrets.RAAD_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RAAD_KEYSTORE_BASE64}" || -z "${RAAD_KEYSTORE_PASSWORD}" || -z "${RAAD_KEY_ALIAS}" || -z "${RAAD_KEY_PASSWORD}" ]]; then
+            echo "::warning::Persistent signing secrets are missing. Tests can pass, but no APK will be built or published until all four RAAD signing secrets are configured."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          mkdir -p android/app
+          printf '%s' "$RAAD_KEYSTORE_BASE64" | base64 --decode > android/app/raad-release.keystore
+          test -s android/app/raad-release.keystore
+          chmod 600 android/app/raad-release.keystore
+          keytool -list -keystore android/app/raad-release.keystore -storepass "$RAAD_KEYSTORE_PASSWORD" -alias "$RAAD_KEY_ALIAS" >/dev/null
+          printf 'RAAD_KEYSTORE_PATH=%s\n' "$PWD/android/app/raad-release.keystore" >> "$GITHUB_ENV"
+          printf 'RAAD_KEYSTORE_PASSWORD=%s\n' "$RAAD_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          printf 'RAAD_KEY_ALIAS=%s\n' "$RAAD_KEY_ALIAS" >> "$GITHUB_ENV"
+          printf 'RAAD_KEY_PASSWORD=%s\n' "$RAAD_KEY_PASSWORD" >> "$GITHUB_ENV"
+
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          expected_id = "com.raad.mobile.raad"
+          kts = Path("android/app/build.gradle.kts")
+          groovy = Path("android/app/build.gradle")
+          gradle_path = kts if kts.exists() else groovy
+          if not gradle_path.exists():
+              raise SystemExit("Generated Android Gradle app file was not found.")
+
+          source = gradle_path.read_text(encoding="utf-8")
+          match = re.search(r'applicationId\s*(?:=\s*)?["\']([^"\']+)["\']', source)
+          if match is None or match.group(1) != expected_id:
+              actual = match.group(1) if match else "missing"
+              raise SystemExit(f"Unexpected Android applicationId: {actual}; expected {expected_id}")
+
+          if gradle_path.suffix == ".kts":
+              if 'create("raadRelease")' not in source:
+                  block = '''    signingConfigs {
+                  create("raadRelease") {
+                      storeFile = file(System.getenv("RAAD_KEYSTORE_PATH") ?: error("RAAD_KEYSTORE_PATH missing"))
+                      storePassword = System.getenv("RAAD_KEYSTORE_PASSWORD") ?: error("RAAD_KEYSTORE_PASSWORD missing")
+                      keyAlias = System.getenv("RAAD_KEY_ALIAS") ?: error("RAAD_KEY_ALIAS missing")
+                      keyPassword = System.getenv("RAAD_KEY_PASSWORD") ?: error("RAAD_KEY_PASSWORD missing")
+                  }
+              }
+
+              '''
+                  if "    buildTypes {" not in source:
+                      raise SystemExit("Could not locate buildTypes in Kotlin Gradle file.")
+                  source = source.replace("    buildTypes {", block + "    buildTypes {", 1)
+              old_signing = 'signingConfig = signingConfigs.getByName("debug")'
+              if old_signing in source:
+                  source = source.replace(old_signing, 'signingConfig = signingConfigs.getByName("raadRelease")', 1)
+              else:
+                  old_signing = "signingConfig = signingConfigs.debug"
+                  if old_signing not in source:
+                      raise SystemExit("Could not locate the generated release signingConfig in Kotlin Gradle file.")
+                  source = source.replace(old_signing, 'signingConfig = signingConfigs.getByName("raadRelease")', 1)
+          else:
+              if "raadRelease {" not in source:
+                  block = '''    signingConfigs {
+                  raadRelease {
+                      storeFile file(System.getenv("RAAD_KEYSTORE_PATH"))
+                      storePassword System.getenv("RAAD_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("RAAD_KEY_ALIAS")
+                      keyPassword System.getenv("RAAD_KEY_PASSWORD")
+                  }
+              }
+
+              '''
+                  if "    buildTypes {" not in source:
+                      raise SystemExit("Could not locate buildTypes in Groovy Gradle file.")
+                  source = source.replace("    buildTypes {", block + "    buildTypes {", 1)
+              if "signingConfig signingConfigs.debug" in source:
+                  source = source.replace("signingConfig signingConfigs.debug", "signingConfig signingConfigs.raadRelease", 1)
+              elif 'signingConfig signingConfigs.getByName("debug")' in source:
+                  source = source.replace('signingConfig signingConfigs.getByName("debug")', "signingConfig signingConfigs.raadRelease", 1)
+              else:
+                  raise SystemExit("Could not locate the generated release signingConfig in Groovy Gradle file.")
+
+          gradle_path.write_text(source, encoding="utf-8")
+          print(f"Verified applicationId and configured persistent signing in {gradle_path}.")
+          PY
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK
+        if: steps.signing.outputs.ready == 'true'
         working-directory: app
         timeout-minutes: 15
         run: flutter build apk --release --no-pub
 
+      - name: Verify package ID and APK signature
+        if: steps.signing.outputs.ready == 'true'
+        working-directory: app
+        shell: bash
+        env:
+          RAAD_KEYSTORE_PASSWORD: ${{ secrets.RAAD_KEYSTORE_PASSWORD }}
+          RAAD_KEY_ALIAS: ${{ secrets.RAAD_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          apk="build/app/outputs/flutter-apk/app-release.apk"
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          [[ -n "$apksigner" && -n "$aapt" ]] || { echo "Android signing/manifest tools not found." >&2; exit 1; }
+          "$apksigner" verify "$apk"
+          expected="$(
+            keytool -list -v -keystore "$RAAD_KEYSTORE_PATH" -storepass "$RAAD_KEYSTORE_PASSWORD" -alias "$RAAD_KEY_ALIAS" |
+            sed -n 's/^[[:space:]]*SHA256: //p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]'
+          )"
+          actual="$(
+            "$apksigner" verify --print-certs "$apk" |
+            sed -n 's/^[[:space:]]*Signer #1 certificate SHA-256 digest: //p' | head -n 1 |
+            tr -d ':' | tr '[:upper:]' '[:lower:]'
+          )"
+          package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
+          [[ -n "$expected" && "$expected" == "$actual" ]] || { echo "APK signing certificate does not match the persistent key." >&2; exit 1; }
+          [[ "$package_name" == "com.raad.mobile.raad" ]] || { echo "Unexpected APK package ID: $package_name" >&2; exit 1; }
+          echo "Verified stable package ID and matching APK certificate."
+
       - name: Upload APK artifact
+        if: steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: raad-android-apk
