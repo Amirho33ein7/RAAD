@@ -10,11 +10,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'services/clip_storage_service.dart';
 import 'services/app_version.dart';
+import 'services/local_persistence_service.dart';
 import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.1+5';
+const String raadAppVersion = '0.4.2+6';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
@@ -57,6 +58,11 @@ class _RaadHomeState extends State<RaadHome> {
   bool _requestingFileAccess = false;
   bool _fileAccessReady = false;
   String? _fileAccessMessage;
+  String? _fileAccessFolderName;
+  late final Future<void> _localLoadFuture;
+  Future<void> _backupWriteQueue = Future<void>.value();
+  bool _restoringExternalBackup = false;
+  final LocalPersistenceService _localStore = LocalPersistenceService();
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
   List<Map<String, dynamic>> _savedPlayers = [];
@@ -87,8 +93,9 @@ class _RaadHomeState extends State<RaadHome> {
   @override
   void initState() {
     super.initState();
-    _loadLocal();
-    // Prepare file-manager saving as soon as the app launches.
+    _localLoadFuture = _loadLocal();
+    // Android's own directory chooser asks the user to grant a real,
+    // persistable folder permission on first launch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (Platform.isAndroid) _ensureFileSavingAccess(startup: true);
     });
@@ -96,7 +103,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<bool> _ensureFileSavingAccess({bool startup = false}) async {
     if (!Platform.isAndroid) {
-      if (!startup) _toast('ذخیرهٔ فایل عمومی در نسخهٔ اندروید فعال است.');
+      if (!startup) _toast('ذخیرهٔ فایل در نسخهٔ اندروید فعال است.');
       return false;
     }
     if (_requestingFileAccess) return _fileAccessReady;
@@ -104,36 +111,191 @@ class _RaadHomeState extends State<RaadHome> {
 
     var granted = false;
     String message = '';
+    String? folderName;
     try {
       final response = await _fileStorageChannel.invokeMapMethod<String, dynamic>(
         'ensureAccess',
       );
       granted = response?['granted'] == true;
       message = response?['message']?.toString() ??
-          (granted
-              ? 'محل ذخیرهٔ فایل: Download/RAAD'
-              : 'مجوز ذخیرهٔ فایل صادر نشد.');
+          (granted ? 'دسترسی پوشهٔ ذخیره‌سازی آماده است.' : 'پوشه‌ای انتخاب نشد.');
+      folderName = response?['folderName']?.toString();
     } on PlatformException catch (error) {
-      message = error.message ?? 'بررسی مجوز ذخیرهٔ فایل ناموفق بود.';
+      message = error.message ?? 'دسترسی پوشهٔ ذخیره‌سازی ناموفق بود.';
     } on MissingPluginException {
-      message = 'بخش ذخیرهٔ فایل اندروید در این بیلد موجود نیست.';
+      message = 'کد ذخیره‌سازی فایل در این APK وجود ندارد.';
     } catch (error) {
-      message = 'بررسی دسترسی فایل ناموفق بود: $error';
+      message = 'بررسی دسترسی پوشه ناموفق بود: $error';
     }
 
     if (mounted) {
       setState(() {
         _fileAccessReady = granted;
         _fileAccessMessage = message;
+        _fileAccessFolderName = folderName ?? _fileAccessFolderName;
         _requestingFileAccess = false;
       });
     }
+
+    if (granted) {
+      await _localLoadFuture;
+      await _restoreExternalBackup();
+    } else if (startup && mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('برای ذخیرهٔ فایل اجازه بده'),
+          content: Text(
+            '$message\n\nیک پوشهٔ قابل‌دسترسی مثل Documents را در پنجرهٔ سیستمی انتخاب کن. رعد پوشهٔ RAAD را داخل آن می‌سازد و فایل‌های کلیپ را همان‌جا قرار می‌دهد.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('بعداً'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+                _ensureFileSavingAccess();
+              },
+              child: const Text('انتخاب پوشه'),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (!startup) {
       _toast(granted
-          ? 'ذخیرهٔ فایل آماده است: Download/RAAD'
+          ? 'فایل‌ها در پوشهٔ ${folderName ?? 'RAAD'} ذخیره می‌شوند.'
           : message);
     }
     return granted;
+  }
+
+  Future<void> _restoreExternalBackup() async {
+    if (!_fileAccessReady || _restoringExternalBackup || !Platform.isAndroid) {
+      return;
+    }
+    _restoringExternalBackup = true;
+    try {
+      final raw = await _fileStorageChannel.invokeMethod<String>('readBackup');
+      if (raw == null || raw.trim().isEmpty) {
+        await _syncExternalBackup(fromRestore: true);
+        return;
+      }
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const FormatException('پشتیبان رعد ساختار JSON معتبری ندارد.');
+      }
+      final external = Map<String, dynamic>.from(decoded);
+      final internal = await _localStore.read() ?? <String, dynamic>{};
+      final merged = _mergeBackupData(internal, external);
+      await _localStore.saveAll(merged);
+      await _loadLocal();
+      await _syncExternalBackup(fromRestore: true);
+    } catch (error) {
+      // A missing/inaccessible old backup must never erase valid local data.
+      if (mounted && _fileAccessMessage == null) {
+        setState(() => _fileAccessMessage =
+            'فایل پشتیبان قبلی خوانده نشد؛ اطلاعات محلی حفظ شده است: $error');
+      }
+    } finally {
+      _restoringExternalBackup = false;
+    }
+  }
+
+  Map<String, dynamic> _mergeBackupData(
+    Map<String, dynamic> local,
+    Map<String, dynamic> external,
+  ) {
+    final merged = <String, dynamic>{...external, ...local};
+
+    List<Map<String, dynamic>> rows(Object? value) {
+      if (value is! List) return <Map<String, dynamic>>[];
+      return value.whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row)).toList();
+    }
+
+    String identity(String key, Map<String, dynamic> row) {
+      if (key == 'savedPlayers') {
+        final rawProfile = row['profile'];
+        final profile = rawProfile is Map
+            ? Map<String, dynamic>.from(rawProfile)
+            : <String, dynamic>{};
+        final id = (profile['shortId'] ?? row['shortId'] ?? '')
+            .toString().trim().toLowerCase();
+        if (id.isNotEmpty) return 'id:$id';
+        final query = row['query']?.toString().trim().toLowerCase() ?? '';
+        if (query.isNotEmpty) return 'query:$query';
+      } else if (key == 'clips') {
+        for (final field in ['file_name', 'public_uri', 'url']) {
+          final value = row[field]?.toString().trim();
+          if (value != null && value.isNotEmpty) return '$field:$value';
+        }
+        return 'clip:${row['created_at'] ?? ''}:${row['title'] ?? ''}';
+      } else if (key == 'rankHistory') {
+        return 'rank:${row['shortId'] ?? row['nickname'] ?? ''}:'
+            '${row['saved_at'] ?? ''}:${row['level'] ?? ''}:'
+            '${row['rating'] ?? ''}';
+      }
+      return jsonEncode(row);
+    }
+
+    for (final key in ['savedPlayers', 'clips', 'rankHistory']) {
+      final combined = <String, Map<String, dynamic>>{};
+      // Insert old backup first, then let current local records win on collision.
+      for (final row in [...rows(external[key]), ...rows(local[key])]) {
+        combined[identity(key, row)] = row;
+      }
+      merged[key] = combined.values.toList().reversed
+          .take(key == 'rankHistory' ? 50 : 100).toList().reversed.toList();
+    }
+
+    final externalManual = external['manualProfile'];
+    final localManual = local['manualProfile'];
+    merged['manualProfile'] = <String, dynamic>{
+      if (externalManual is Map) ...Map<String, dynamic>.from(externalManual),
+      if (localManual is Map) ...Map<String, dynamic>.from(localManual),
+    };
+    if ((local['profileCache'] is! Map ||
+            (local['profileCache'] as Map).isEmpty) &&
+        external['profileCache'] is Map) {
+      merged['profileCache'] = external['profileCache'];
+    }
+    if ((local['lastProfileQuery']?.toString().trim().isEmpty ?? true) &&
+        external['lastProfileQuery'] != null) {
+      merged['lastProfileQuery'] = external['lastProfileQuery'];
+    }
+
+    final events = <String>[];
+    for (final event in [
+      if (external['events'] is List) ...(external['events'] as List),
+      if (local['events'] is List) ...(local['events'] as List),
+    ]) {
+      final text = event.toString();
+      if (!events.contains(text)) events.add(text);
+    }
+    merged['events'] = events.take(100).toList();
+    return merged;
+  }
+
+  Future<void> _syncExternalBackup({bool fromRestore = false}) {
+    if (!Platform.isAndroid ||
+        !_fileAccessReady ||
+        (_restoringExternalBackup && !fromRestore)) {
+      return Future<void>.value();
+    }
+    final operation = _backupWriteQueue.then((_) async {
+      final state = await _localStore.read();
+      if (state == null) return;
+      await _fileStorageChannel.invokeMethod<bool>(
+        'writeBackup',
+        <String, dynamic>{'json': jsonEncode(state)},
+      );
+    });
+    _backupWriteQueue = operation.catchError((Object _) {});
+    return operation.catchError((Object _) {});
   }
 
   Future<void> _loadLocal() async {
@@ -853,11 +1015,55 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _openClipEntry(Map<String, dynamic> clip) async {
     if (clip['type'] == 'video') {
-      final path = clip['path']?.toString() ?? '';
-      if (path.isEmpty || !await File(path).exists()) { _toast('فایل ویدیو پیدا نشد.'); return; }
+      var path = clip['path']?.toString() ?? '';
+      if (path.isEmpty || !await File(path).exists()) {
+        final publicUri = clip['public_uri']?.toString() ?? '';
+        if (publicUri.isNotEmpty && Platform.isAndroid) {
+          try {
+            final docs = await getApplicationDocumentsDirectory();
+            final name = clip['file_name']?.toString().trim().isNotEmpty == true
+                ? clip['file_name'].toString()
+                : 'restored_clip_${DateTime.now().millisecondsSinceEpoch}.mp4';
+            final target = File('${docs.path}/raad_clips/$name');
+            final restored = await _fileStorageChannel.invokeMapMethod<String, dynamic>(
+              'restoreVideoToPrivate',
+              <String, dynamic>{
+                'uri': publicUri,
+                'targetPath': target.path,
+              },
+            );
+            final restoredBytes = int.tryParse(restored?['bytes']?.toString() ?? '');
+            final expectedBytes = int.tryParse(clip['size_bytes']?.toString() ?? '');
+            if (restored?['path'] == null ||
+                restoredBytes == null ||
+                restoredBytes <= 0 ||
+                (expectedBytes != null && restoredBytes != expectedBytes)) {
+              throw StateError('تأیید بازیابی کلیپ از فایل‌های گوشی ناموفق بود.');
+            }
+            path = restored!['path'].toString();
+            final index = _clips.indexOf(clip);
+            if (index >= 0) {
+              final updated = Map<String, dynamic>.from(clip)..['path'] = path;
+              final next = List<Map<String, dynamic>>.from(_clips);
+              next[index] = updated;
+              await _persistClips(next);
+              if (mounted) setState(() => _clips = next);
+            }
+          } catch (error) {
+            _toast('فایل کلیپ در پوشهٔ انتخاب‌شده بازیابی نشد. پوشه را دوباره از تنظیمات انتخاب کن. $error');
+            return;
+          }
+        } else {
+          _toast('فایل ویدیو پیدا نشد. اگر برنامه نصب مجدد شده، پوشهٔ پشتیبان را در تنظیمات انتخاب کن.');
+          return;
+        }
+      }
       if (!mounted) return;
       await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => ClipPreviewPage(path: path, title: clip['title']?.toString() ?? 'پیش‌نمایش کلیپ'),
+        builder: (_) => ClipPreviewPage(
+          path: path,
+          title: clip['title']?.toString() ?? 'پیش‌نمایش کلیپ',
+        ),
       ));
       return;
     }
@@ -1215,7 +1421,12 @@ class _RaadHomeState extends State<RaadHome> {
   Widget _clipsPage() => ListView(padding: const EdgeInsets.all(18), children: [
     _heading('کلیپ‌های من'),
     const SizedBox(height: 8),
-    const Text('ویدیو بعد از تأیید، به‌صورت فایل واقعی در پوشهٔ Download/RAAD ذخیره می‌شود و از برنامهٔ «مدیریت فایل» گوشی قابل‌مشاهده است. یک کپی خصوصی هم برای پخش داخل رعد نگه‌داری می‌شود.', style: TextStyle(color: Colors.white60)),
+    Text(
+      _fileAccessReady
+          ? 'فایل ویدیو در پوشهٔ ${_fileAccessFolderName ?? 'RAAD'} ذخیره می‌شود؛ در «مدیریت فایل» قابل‌مشاهده است. یک پشتیبان از پروفایل‌ها هم برای بازیابی پس از نصب مجدد در همین پوشه نگه‌داری می‌شود.'
+          : 'برای ذخیرهٔ واقعی کلیپ، پوشه‌ای را در پنجرهٔ سیستمی انتخاب کن. رعد پوشهٔ RAAD را در آن می‌سازد و فایل ویدیو و پشتیبان پروفایل را همان‌جا قرار می‌دهد.',
+      style: const TextStyle(color: Colors.white60),
+    ),
     const SizedBox(height: 12),
     FilledButton.icon(onPressed: _pickVideo, icon: const Icon(Icons.video_library_outlined), label: const Text('انتخاب و ذخیرهٔ ویدیو')),
     const SizedBox(height: 8),
@@ -1279,9 +1490,9 @@ class _RaadHomeState extends State<RaadHome> {
               _requestingFileAccess
                   ? 'در حال بررسی دسترسی ذخیرهٔ فایل...'
                   : _fileAccessReady
-                      ? 'وضعیت: آمادهٔ ذخیره در پوشهٔ Download/RAAD'
+                      ? 'مجوز پایدار فعال است: ${_fileAccessFolderName ?? 'RAAD'}'
                       : (_fileAccessMessage ??
-                          'رعد فایل‌های کلیپ را در پوشهٔ Download/RAAD می‌سازد؛ این فایل‌ها در برنامهٔ مدیریت فایل گوشی دیده می‌شوند.'),
+                          'برای ذخیرهٔ کلیپ، دسترسی پایدار یک پوشه را از انتخاب‌گر رسمی اندروید بده.'),
               style: const TextStyle(color: Colors.white70),
             ),
             const SizedBox(height: 8),
@@ -1302,7 +1513,7 @@ class _RaadHomeState extends State<RaadHome> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'در اندروید 10 به بالا، برای ساخت فایل در Download/RAAD از دسترسی امن سیستم استفاده می‌شود و مجوز گستردهٔ تمام فایل‌های گوشی لازم نیست. در اندرویدهای قدیمی‌تر، مجوز ذخیره‌سازی هنگام اجرا درخواست می‌شود.',
+              'هنگام اولین اجرا پنجرهٔ رسمی انتخاب پوشه باز می‌شود؛ یک پوشه مثل Documents را انتخاب و «استفاده از این پوشه» را تأیید کن. رعد داخلش پوشهٔ RAAD می‌سازد، مجوز را برای دفعات بعد حفظ می‌کند و فایل‌های ویدیو همراه پشتیبان پروفایل در آن ذخیره می‌شوند.',
               style: TextStyle(color: Colors.white54, fontSize: 12),
             ),
           ],
@@ -1342,7 +1553,7 @@ class _RaadHomeState extends State<RaadHome> {
     const SizedBox(height: 12),
     _notice('پروژهٔ مستقل', 'رعد محصول رسمی Activision نیست و سرویس پروفایل استفاده‌شده غیررسمی است.'),
     const SizedBox(height: 8),
-    _notice('داده‌های محلی', 'تاریخچه، مقادیر دستی پروفایل و کلیپ‌های واردشده در حافظهٔ همین گوشی ذخیره می‌شوند. در نسخهٔ فعلی، فایل ویدیو به فضای ابری ارسال نمی‌شود.'),
+    _notice('ذخیره‌سازی و بازیابی', 'پروفایل‌ها ابتدا در فایل محلی تأییدشده ذخیره می‌شوند و پس از انتخاب پوشه، یک فایل raad_profile_backup.json هم در همان پوشه برای بازیابی پس از نصب مجدد ساخته می‌شود. کلیپ‌ها به سرویس ابری فرستاده نمی‌شوند.'),
     const SizedBox(height: 8),
     _notice('امنیت حساب‌ها', 'ورود Google در این نسخه حذف شده چون تنظیمات OAuth و امضای قابل‌آزمایش در مخزن موجود نبود. هیچ‌وقت رمز Google یا Activision را در فرم‌های این برنامه وارد نکن.'),
     const SizedBox(height: 12),
