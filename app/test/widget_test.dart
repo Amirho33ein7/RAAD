@@ -83,11 +83,21 @@ void main() {
     testStoreDirectory = null;
   });
 
+  testWidgets('uses tactical dark styling and keeps the drawer uncluttered', (tester) async {
+    await pumpRaadApp(tester);
+    await pumpUntilFound(tester, find.text('مرکز عملیات رعد'));
+
+    final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(app.theme!.brightness, Brightness.dark);
+    expect(app.theme!.scaffoldBackgroundColor, const Color(0xFF080A07));
+    expect(find.text('رکوردها و لینک‌ها محلی هستند. سرور پروفایل، غیررسمی است.'), findsNothing);
+  });
+
   testWidgets('dashboard opens without requiring the network', (tester) async {
     await pumpRaadApp(tester);
-    await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
+    await pumpUntilFound(tester, find.text('مرکز عملیات رعد'));
 
-    expect(find.text('مرکز فرماندهی بازیکن'), findsOneWidget);
+    expect(find.text('مرکز عملیات رعد'), findsOneWidget);
     expect(find.text('جست‌وجوی پروفایل'), findsWidgets);
     expect(find.text('مقایسهٔ بازیکنان'), findsWidgets);
     expect(find.text('کلیپ‌های من'), findsWidgets);
@@ -95,7 +105,7 @@ void main() {
 
   testWidgets('drawer routes to rank, compare, clips and sync pages', (tester) async {
     await pumpRaadApp(tester);
-    await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
+    await pumpUntilFound(tester, find.text('مرکز عملیات رعد'));
 
     Future<void> openPage(String label) async {
       await tester.tap(find.byIcon(Icons.menu));
