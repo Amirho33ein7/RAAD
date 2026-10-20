@@ -931,9 +931,11 @@ class _RaadHomeState extends State<RaadHome> {
     };
     final next = [row, ..._clips];
     await _persistClips(next);
+    // Finish the secondary event-log write before exposing delete actions.
+    // Both operations share the serialized local JSON store.
+    await _recordEvent('لینک کلیپ محلی ذخیره شد.');
     if (!mounted) return;
     setState(() => _clips = next);
-    await _recordEvent('لینک کلیپ محلی ذخیره شد.');
   }
 
   Future<void> _pickVideo() async {
@@ -1021,12 +1023,12 @@ class _RaadHomeState extends State<RaadHome> {
       final next = [row, ..._clips];
       await _persistClips(next);
       libraryEntryPersisted = true;
-      if (!mounted) return;
-
-      setState(() => _clips = next);
       await _recordEvent(
         'فایل کلیپ در پوشهٔ $publicPath ذخیره و اندازهٔ آن تأیید شد.',
       );
+      if (!mounted) return;
+
+      setState(() => _clips = next);
       _toast(
         'کلیپ به‌صورت فایل واقعی ذخیره شد: $publicPath',
       );
