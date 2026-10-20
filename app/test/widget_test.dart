@@ -23,6 +23,22 @@ void main() {
       await tester.pumpAndSettle();
     }
   }
+  Future<Map<String, dynamic>?> waitForDurableData(
+    WidgetTester tester,
+    bool Function(Map<String, dynamic> state) predicate,
+  ) async {
+    Map<String, dynamic>? last;
+    await tester.runAsync(() async {
+      for (var attempt = 0; attempt < 40; attempt++) {
+        last = await LocalPersistenceService().read();
+        if (last != null && predicate(last!)) return;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    });
+    await tester.pumpAndSettle();
+    return last;
+  }
+
   Directory? testStoreDirectory;
 
   setUp(() async {
@@ -158,22 +174,32 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    // Do not inspect the lazy profile list until the startup restore has
+    // finished and the actual profile page replaced the loading screen.
+    await pumpUntilFound(tester, find.text('جست‌وجوی پروفایل'));
     final saveButton = find.text('ذخیرهٔ این بازیکن');
-    await pumpUntilFound(tester, saveButton);
     await tester.scrollUntilVisible(
       saveButton,
       220,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.byType(ListView).first,
     );
     await tester.pumpAndSettle();
     expect(saveButton, findsOneWidget);
     await tester.tap(saveButton);
     await tester.pumpAndSettle();
-    final savedList = find.text('بازیکنان ذخیره‌شده (1)');
-    await pumpUntilFound(tester, savedList);
-    expect(savedList, findsOneWidget, reason: 'the saved profile must appear after the durable write');
 
-    // Simulate a full process restart and loss of the old preferences mirror.
+    final durableSaved = await waitForDurableData(
+      tester,
+      (state) => state['savedPlayers'] is List &&
+          (state['savedPlayers'] as List).length == 1,
+    );
+    expect(
+      (durableSaved?['savedPlayers'] as List?)?.length,
+      1,
+      reason: 'saving a profile must commit to the atomic JSON file',
+    );
+
+    // Simulate a process restart and loss of the preferences mirror.
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     await tester.pumpWidget(const SizedBox.shrink());
@@ -188,10 +214,33 @@ void main() {
       matching: find.text('پروفایل کالاف'),
     ));
     await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('جست‌وجوی پروفایل'));
 
-    await pumpUntilFound(tester, find.text('بازیکنان ذخیره‌شده (1)'));
-    expect(find.text('بازیکنان ذخیره‌شده (1)'), findsOneWidget);
-    expect(find.text('NightOwl'), findsOneWidget);
+    final restoredSaved = await waitForDurableData(
+      tester,
+      (state) => state['savedPlayers'] is List &&
+          (state['savedPlayers'] as List).length == 1,
+    );
+    expect(
+      (restoredSaved?['savedPlayers'] as List?)?.length,
+      1,
+      reason: 'the stored profile must remain after restart without SharedPreferences',
+    );
+
+    final countLabel = find.text('بازیکنان ذخیره‌شده (1)');
+    await tester.scrollUntilVisible(
+      countLabel,
+      220,
+      scrollable: find.byType(ListView).first,
+    );
+    expect(countLabel, findsOneWidget);
+    final savedName = find.text('NightOwl');
+    await tester.scrollUntilVisible(
+      savedName,
+      220,
+      scrollable: find.byType(ListView).first,
+    );
+    expect(savedName, findsOneWidget);
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
@@ -212,26 +261,49 @@ void main() {
     await tester.enterText(find.byType(TextField).last, 'https://example.com/my-clip');
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
+
+    final durableClip = await waitForDurableData(
+      tester,
+      (state) => state['clips'] is List &&
+          (state['clips'] as List).any(
+            (row) => row is Map && row['url'] == 'https://example.com/my-clip',
+          ),
+    );
+    expect(
+      (durableClip?['clips'] as List?)?.any(
+        (row) => row is Map && row['url'] == 'https://example.com/my-clip',
+      ),
+      isTrue,
+      reason: 'the new clip link must be saved to durable storage',
+    );
+
     final savedClipLink = find.text('https://example.com/my-clip');
-    await pumpUntilFound(tester, savedClipLink);
-    expect(savedClipLink, findsOneWidget, reason: 'the clip link should appear after the durable write');
     await tester.scrollUntilVisible(
       savedClipLink,
       220,
-      scrollable: find.byType(Scrollable).first,
+      scrollable: find.byType(ListView).first,
     );
-    await tester.pumpAndSettle();
-
     expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
 
     await tester.tap(find.byTooltip('حذف'));
     await tester.pumpAndSettle();
-
+    final clipsAfterDelete = await waitForDurableData(
+      tester,
+      (state) => state['clips'] is List &&
+          !(state['clips'] as List).any(
+            (row) => row is Map && row['url'] == 'https://example.com/my-clip',
+          ),
+    );
+    expect(
+      (clipsAfterDelete?['clips'] as List?)?.any(
+        (row) => row is Map && row['url'] == 'https://example.com/my-clip',
+      ),
+      isFalse,
+    );
     expect(find.text('https://example.com/my-clip'), findsNothing);
     expect(find.text('کتابخانه خالی است'), findsOneWidget);
   });
-
 
   testWidgets('level leaderboard sorts players by saved level growth', (tester) async {
     SharedPreferences.setMockInitialValues({
