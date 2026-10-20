@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'services/clip_storage_service.dart';
 import 'services/app_version.dart';
-import 'services/local_persistence_service.dart';
+import 'package:raad/services/local_persistence_service.dart';
 import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
@@ -312,11 +312,6 @@ class _RaadHomeState extends State<RaadHome> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final durable = await _localStore.read() ?? <String, dynamic>{};
-      debugPrint(
-        'RAAD loadLocal start: durableKeys=${durable.keys.toList()}, '
-        'legacyPlayers=${prefs.getStringList('raad.savedPlayers.v1')?.length}, '
-        'legacyRanks=${prefs.getStringList('raad.rankHistory.v1')?.length}',
-      );
 
       List<Map<String, dynamic>> readRows(
         String durableKey,
@@ -410,10 +405,6 @@ class _RaadHomeState extends State<RaadHome> {
           .where((row) =>
               row['profile'] is Map && row['query'] != null)
           .toList();
-      debugPrint(
-        'RAAD loadLocal parsed: players=${savedRows.length}, '
-        'ranks=${rows.length}, clips=${clipRows.length}',
-      );
       final durableEvents = durable['events'];
       final preferenceEvents = prefs.getStringList('raad.events.v1');
       final eventsSource = durableEvents is List && durableEvents.isNotEmpty
@@ -470,14 +461,12 @@ class _RaadHomeState extends State<RaadHome> {
         await _localStore.mergeMissingOrEmpty(loadedState);
         await _syncExternalBackup();
       } catch (error) {
-        debugPrint('RAAD durable migration failed: $error');
         if (mounted) {
           setState(() => _fileAccessMessage =
               'پروفایل‌ها نمایش داده شدند، اما نوشتن فایل پایدار کامل نشد: $error');
         }
       }
-    } catch (error, stackTrace) {
-      print('RAAD loadLocal failed: $error\n$stackTrace');
+    } catch (error) {
       // Do not replace existing state with empty collections on a read failure.
       if (mounted) {
         setState(() {
