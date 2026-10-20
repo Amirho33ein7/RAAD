@@ -758,12 +758,14 @@ jobs:
             sha256sum | awk '{print tolower($1)}'
           )"
           actual="$(
-            "$apksigner" verify --verbose --print-certs "$apk" 2>&1 |
-            grep -Eo '[[:xdigit:]]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]'
+            "$apksigner" verify --print-certs-pem "$apk" 2>&1 |
+            awk '/-----BEGIN CERTIFICATE-----/ {in_cert=1} in_cert {print} /-----END CERTIFICATE-----/ {exit}' |
+            openssl x509 -inform PEM -noout -fingerprint -sha256 |
+            awk -F= '{gsub(/:/, "", $2); print tolower($2)}'
           )"
           echo "Signing certificate fingerprint comparison: keystore=$expected apk=$actual"
           package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
-          [[ -n "$expected" && "$expected" == "$actual" ]] || { echo "APK signing certificate does not match the persistent key." >&2; exit 1; }
+          [[ -n "$expected" && -n "$actual" && "$expected" == "$actual" ]] || { echo "APK signing certificate does not match the persistent key." >&2; exit 1; }
           [[ "$package_name" == "com.raad.mobile.raad" ]] || { echo "Unexpected APK package ID: $package_name" >&2; exit 1; }
           echo "Verified stable package ID and matching APK certificate."
       - name: Upload APK artifact
