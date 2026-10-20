@@ -1439,7 +1439,7 @@ class _RaadHomeState extends State<RaadHome> {
       subtitle: Text([
         if ((clip['description']?.toString() ?? '').isNotEmpty) clip['description'].toString(),
         clip['type'] == 'video'
-            ? 'فایل گوشی: ${clip['public_path']?.toString() ?? 'Download/RAAD'}'
+            ? 'فایل گوشی: ${clip['public_path']?.toString() ?? 'پوشهٔ RAAD'}'
             : 'لینک ذخیره‌شده روی دستگاه',
       ].join(' • ')),
       onTap: () => _openClipEntry(clip),
@@ -1569,7 +1569,12 @@ class _RaadHomeState extends State<RaadHome> {
     if (_events.isEmpty) _empty(Icons.history, 'رخدادی ثبت نشده', 'بعد از دریافت پروفایل یا ذخیره‌سازی، رویداد اینجا نمایش داده می‌شود.'),
     ..._events.map((event) => Card(color: panel, child: ListTile(leading: const Icon(Icons.history, color: accent), title: Text(event)))),
     if (_events.isNotEmpty) TextButton.icon(onPressed: () async {
-      final p = await SharedPreferences.getInstance(); await p.remove('raad.events.v1');
+      await _localStore.saveValue('events', <String>[]);
+      try {
+        final p = await SharedPreferences.getInstance();
+        await p.setStringList('raad.events.v1', <String>[]);
+      } catch (_) {}
+      await _syncExternalBackup();
       if (mounted) setState(() => _events = []);
     }, icon: const Icon(Icons.delete_outline), label: const Text('پاک‌کردن تاریخچه')),
   ]);
