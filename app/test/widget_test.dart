@@ -319,6 +319,33 @@ void main() {
     expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
 
+    // Simulate a real app restart and remove the SharedPreferences mirror so
+    // the primary on-disk JSON store must restore the clip list by itself.
+    final prefsBeforeRestart = await SharedPreferences.getInstance();
+    await prefsBeforeRestart.clear();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('کلیپ‌های من'),
+    ));
+    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('https://example.com/my-clip'));
+    final restoredClipLink = find.text('https://example.com/my-clip');
+    await tester.scrollUntilVisible(
+      restoredClipLink,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(
+      restoredClipLink,
+      findsOneWidget,
+      reason: 'clip metadata must survive an app restart without the preferences mirror',
+    );
+
     final deleteButton = find.byKey(
       const ValueKey<String>('raad-delete-clip-url:https://example.com/my-clip'),
     );
