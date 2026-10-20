@@ -63,6 +63,7 @@ void main() {
   testWidgets('dashboard opens without requiring the network', (tester) async {
     await tester.pumpWidget(const RaadApp());
     await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
 
     expect(find.text('مرکز فرماندهی بازیکن'), findsOneWidget);
     expect(find.text('جست‌وجوی پروفایل'), findsWidgets);
@@ -182,7 +183,7 @@ void main() {
     await tester.scrollUntilVisible(
       saveButton,
       220,
-      scrollable: find.byType(ListView).first,
+      scrollable: find.byType(Scrollable).first,
     );
     await tester.pumpAndSettle();
     expect(saveButton, findsOneWidget);
@@ -232,14 +233,14 @@ void main() {
     await tester.scrollUntilVisible(
       countLabel,
       220,
-      scrollable: find.byType(ListView).first,
+      scrollable: find.byType(Scrollable).first,
     );
     expect(countLabel, findsOneWidget);
     final savedName = find.text('NightOwl');
     await tester.scrollUntilVisible(
       savedName,
       220,
-      scrollable: find.byType(ListView).first,
+      scrollable: find.byType(Scrollable).first,
     );
     expect(savedName, findsOneWidget);
   });
@@ -283,7 +284,7 @@ void main() {
     await tester.scrollUntilVisible(
       savedClipLink,
       220,
-      scrollable: find.byType(ListView).first,
+      scrollable: find.byType(Scrollable).first,
     );
     expect(savedClipLink, findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
