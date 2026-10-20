@@ -180,11 +180,7 @@ void main() {
     await pumpUntilFound(tester, find.text('جست‌وجوی پروفایل'));
     final saveButton = find.text('ذخیرهٔ این بازیکن');
     await pumpUntilFound(tester, saveButton);
-    await tester.scrollUntilVisible(
-      saveButton,
-      220,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.ensureVisible(saveButton);
     await tester.pumpAndSettle();
     expect(saveButton, findsOneWidget);
     await tester.tap(saveButton);
@@ -261,7 +257,9 @@ void main() {
     await tester.tap(find.text('افزودن لینک کلیپ'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'https://example.com/my-clip');
-    await tester.tap(find.text('ذخیره'));
+    final saveLinkButton = find.widgetWithText(FilledButton, 'ذخیره');
+    await tester.ensureVisible(saveLinkButton);
+    await tester.tap(saveLinkButton);
     await tester.pumpAndSettle();
 
     final durableClip = await waitForDurableData(
