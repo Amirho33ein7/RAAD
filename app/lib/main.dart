@@ -65,6 +65,7 @@ class _RaadHomeState extends State<RaadHome> {
   // Do not write the external backup until it has been read and merged. Otherwise
   // a slow first load can overwrite the only recoverable copy with stale state.
   bool _externalBackupInitialized = false;
+  bool _localReady = false;
   final LocalPersistenceService _localStore = LocalPersistenceService();
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
@@ -102,6 +103,11 @@ class _RaadHomeState extends State<RaadHome> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (Platform.isAndroid) _ensureFileSavingAccess(startup: true);
     });
+  }
+
+  Future<void> _ensureLocalReady() async {
+    if (_localReady) return;
+    await _localLoadFuture;
   }
 
   Future<bool> _ensureFileSavingAccess({bool startup = false}) async {
@@ -449,6 +455,7 @@ class _RaadHomeState extends State<RaadHome> {
       if (!mounted) return;
       final cached = cachedProfile.isEmpty ? null : cachedProfile;
       setState(() {
+        _localReady = true;
         _rankHistory = rows;
         _savedPlayers = savedRows;
         _clips = clipRows;
@@ -476,6 +483,7 @@ class _RaadHomeState extends State<RaadHome> {
       // Do not replace existing state with empty collections on a read failure.
       if (mounted) {
         setState(() {
+          _localReady = true;
           _fileAccessMessage =
               'بارگذاری داده‌های محلی کامل نشد: $error';
         });
@@ -494,6 +502,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _search() async {
+    await _ensureLocalReady();
     final q = _query.text.trim();
     if (q.isEmpty) { setState(() => _error = 'نام یا شناسهٔ بازیکن را وارد کن.'); return; }
     setState(() { _loading = true; _error = null; _profile = null; _profileQuery = q; });
@@ -522,6 +531,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _persistSavedPlayers(List<Map<String, dynamic>> rows) async {
+    await _ensureLocalReady();
     await _localStore.saveValue('savedPlayers', rows);
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -556,6 +566,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _saveCurrentPlayer() async {
+    await _ensureLocalReady();
     final profile = _profile;
     if (profile == null) {
       _toast('اول بازیکن را با نام داخل بازی یا UID جست‌وجو کن.');
@@ -598,6 +609,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _openSavedPlayer(Map<String, dynamic> saved) async {
+    await _ensureLocalReady();
     final raw = saved['profile'];
     if (raw is! Map) {
       _toast('اطلاعات این پروفایل ذخیره‌شده معتبر نیست.');
@@ -628,6 +640,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _removeSavedPlayer(Map<String, dynamic> saved) async {
+    await _ensureLocalReady();
     final next = _savedPlayers.where((item) => !identical(item, saved)).toList();
     try {
       await _persistSavedPlayers(next);
@@ -639,6 +652,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _compare() async {
+    await _ensureLocalReady();
     final q = _compareQuery.text.trim();
     if (_displayProfile == null) { setState(() => _compareError = 'ابتدا پروفایل اول را در بخش پروفایل دریافت یا دستی ثبت کن.'); return; }
     if (q.isEmpty) { setState(() => _compareError = 'نام یا شناسهٔ بازیکن دوم را وارد کن.'); return; }
@@ -660,6 +674,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _recordEvent(String message) async {
+    await _ensureLocalReady();
     final timestamp = DateTime.now().toLocal().toString().split('.').first;
     final next = [timestamp + ' — ' + message, ..._events].take(100).toList();
     if (mounted) setState(() => _events = next);
@@ -674,6 +689,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _saveSnapshot() async {
+    await _ensureLocalReady();
     final profile = _displayProfile;
     if (profile == null) { _toast('اول پروفایل را جست‌وجو یا اطلاعات دستی را وارد کن.'); return; }
     final snapshot = <String, dynamic>{
@@ -867,6 +883,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _persistClips(List<Map<String, dynamic>> rows) async {
+    await _ensureLocalReady();
     await _localStore.saveValue('clips', rows);
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -884,6 +901,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _addClip() async {
+    await _ensureLocalReady();
     final url = await showDialog<String>(context: context, builder: (_) => const _AddClipDialog());
     if (url == null || url.isEmpty) return;
     final parsed = Uri.tryParse(url);
@@ -905,6 +923,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _pickVideo() async {
+    await _ensureLocalReady();
     String? privateTargetPath;
     String? publicFileUri;
     var libraryEntryPersisted = false;
@@ -1022,6 +1041,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _editClip(Map<String, dynamic> clip) async {
+    await _ensureLocalReady();
     final meta = await showDialog<Map<String, String>>(
       context: context,
       builder: (_) => _EditClipDialog(
@@ -1042,6 +1062,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _removeClip(Map<String, dynamic> clip) async {
+    await _ensureLocalReady();
     final next = _clips.where((item) => !identical(item, clip)).toList();
     if (clip['type'] == 'video' && clip['path'] is String) {
       try {
@@ -1137,6 +1158,7 @@ class _RaadHomeState extends State<RaadHome> {
 
 
   Future<void> _clearHistory() async {
+    await _ensureLocalReady();
     final yes = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('پاک‌کردن تاریخچه؟'),
       content: const Text('رکوردهای ذخیره‌شده روی همین دستگاه حذف می‌شوند.'),
@@ -1156,6 +1178,7 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _editManualProfile() async {
+    await _ensureLocalReady();
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (_) => _ManualProfileDialog(initial: _manualProfile),
@@ -1345,6 +1368,23 @@ class _RaadHomeState extends State<RaadHome> {
   )));
 
   Widget _body() {
+    if (!_localReady) {
+      return ListView(
+        padding: const EdgeInsets.all(24),
+        children: const [
+          SizedBox(height: 72),
+          Icon(Icons.shield_moon_outlined, size: 48, color: accent),
+          SizedBox(height: 20),
+          Center(
+            child: Text(
+              'در حال بازیابی پروفایل‌ها و کلیپ‌های ذخیره‌شده…',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white70, fontSize: 15),
+            ),
+          ),
+        ],
+      );
+    }
     switch (_page) {
       case 1: return _profilePage();
       case 2: return _rankPage();
