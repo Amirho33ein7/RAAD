@@ -18,7 +18,7 @@ void main() {
   Future<void> pumpRaadApp(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await tester.pumpWidget(const RaadApp());
+    await tester.pumpWidget(RaadApp(persistence: LocalPersistenceService(directoryProvider: () async => testStoreDirectory!)));
     await tester.pumpAndSettle();
   }
 
