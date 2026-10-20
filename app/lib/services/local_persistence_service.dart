@@ -6,9 +6,9 @@ import 'package:path_provider/path_provider.dart';
 
 /// Durable app-local state, backed by an atomically replaced JSON file.
 ///
-/// SharedPreferences is kept as a migration/mirror source by the UI. This file
-/// is the primary recovery copy so an interrupted preferences write cannot
-/// silently erase a saved profile.
+/// SharedPreferences is only a legacy/mirror source. The JSON file is primary,
+/// and its .bak companion intentionally retains the previous committed version
+/// so a later read can recover even if the main file becomes unreadable.
 class LocalPersistenceService {
   LocalPersistenceService({Future<Directory> Function()? directoryProvider})
       : _directoryProvider = directoryProvider ?? directoryProviderOverride;
@@ -123,7 +123,8 @@ class LocalPersistenceService {
       if (finalDecoded is! Map || jsonEncode(finalDecoded) != encoded) {
         throw const FileSystemException('تأیید نهایی اطلاعات رعد ناموفق بود.');
       }
-      if (await backup.exists()) await backup.delete();
+      // Keep .bak as the last known-good committed generation. The next
+      // write rotates the current main file into .bak before replacing it.
     } catch (_) {
       if (await main.exists()) await main.delete();
       if (await backup.exists()) await backup.rename(main.path);
