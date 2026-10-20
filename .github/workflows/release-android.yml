@@ -730,30 +730,42 @@ jobs:
         working-directory: app
         shell: bash
         env:
+          RAAD_KEYSTORE_PATH: ${{ github.workspace }}/app/android/app/raad-release.keystore
           RAAD_KEYSTORE_PASSWORD: ${{ secrets.RAAD_KEYSTORE_PASSWORD }}
           RAAD_KEY_ALIAS: ${{ secrets.RAAD_KEY_ALIAS }}
+          RAAD_KEY_PASSWORD: ${{ secrets.RAAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           apk="build/app/outputs/flutter-apk/app-release.apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           [[ -n "$apksigner" && -n "$aapt" ]] || { echo "Android signing/manifest tools not found." >&2; exit 1; }
-          "$apksigner" verify "$apk"
+
+          # Re-sign the final APK explicitly with the persistent release key.
+          # This avoids depending on Flutter/Gradle's default release signing choice.
+          signed_apk="${apk%.apk}.raad-signed.apk"
+          "$apksigner" sign \
+            --ks "$RAAD_KEYSTORE_PATH" \
+            --ks-key-alias "$RAAD_KEY_ALIAS" \
+            --ks-pass env:RAAD_KEYSTORE_PASSWORD \
+            --key-pass env:RAAD_KEY_PASSWORD \
+            --out "$signed_apk" "$apk"
+          mv "$signed_apk" "$apk"
+          "$apksigner" verify --verbose "$apk"
+
           expected="$(
             keytool -exportcert -keystore "$RAAD_KEYSTORE_PATH" -storepass "$RAAD_KEYSTORE_PASSWORD" -alias "$RAAD_KEY_ALIAS" |
             sha256sum | awk '{print tolower($1)}'
           )"
           actual="$(
             "$apksigner" verify --print-certs "$apk" |
-            awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print $2; exit}' |
-            tr -d ':' | tr '[:upper:]' '[:lower:]'
+            awk -F': ' '/Signer #1 certificate SHA-256 digest/ {gsub(/:/, "", $2); print tolower($2); exit}'
           )"
           echo "Signing certificate fingerprint comparison: keystore=$expected apk=$actual"
-          package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
+          package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
           [[ -n "$expected" && "$expected" == "$actual" ]] || { echo "APK signing certificate does not match the persistent key." >&2; exit 1; }
           [[ "$package_name" == "com.raad.mobile.raad" ]] || { echo "Unexpected APK package ID: $package_name" >&2; exit 1; }
           echo "Verified stable package ID and matching APK certificate."
-
       - name: تعیین تگ نسخهٔ انتشار
         if: steps.signing.outputs.ready == 'true'
         id: release_tag
