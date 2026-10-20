@@ -169,9 +169,9 @@ void main() {
     expect(saveButton, findsOneWidget);
     await tester.tap(saveButton);
     await tester.pumpAndSettle();
-    final savedMessage = find.text('بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.');
-    await pumpUntilFound(tester, savedMessage);
-    expect(savedMessage, findsOneWidget);
+    final savedList = find.text('بازیکنان ذخیره‌شده (1)');
+    await pumpUntilFound(tester, savedList);
+    expect(savedList, findsOneWidget, reason: 'the saved profile must appear after the durable write');
 
     // Simulate a full process restart and loss of the old preferences mirror.
     final prefs = await SharedPreferences.getInstance();
@@ -214,6 +214,7 @@ void main() {
     await tester.pumpAndSettle();
     final savedClipLink = find.text('https://example.com/my-clip');
     await pumpUntilFound(tester, savedClipLink);
+    expect(savedClipLink, findsOneWidget, reason: 'the clip link should appear after the durable write');
     await tester.scrollUntilVisible(
       savedClipLink,
       220,
