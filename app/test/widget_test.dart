@@ -10,6 +10,8 @@ import 'package:raad/services/local_persistence_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  Directory? testStoreDirectory;
+
   // File reads/writes run on real platform I/O. Pumping frames alone doesn't
   // wait for those futures, so yield to the real event loop until the resulting
   // widget appears; if it never appears, the assertion still fails.
@@ -30,7 +32,11 @@ void main() {
     Map<String, dynamic>? last;
     await tester.runAsync(() async {
       for (var attempt = 0; attempt < 40; attempt++) {
-        last = await LocalPersistenceService().read();
+        final directory = testStoreDirectory;
+        if (directory == null) return;
+        last = await LocalPersistenceService(
+          directoryProvider: () async => directory,
+        ).read();
         if (last != null && predicate(last!)) return;
         await Future<void>.delayed(const Duration(milliseconds: 100));
       }
@@ -38,8 +44,6 @@ void main() {
     await tester.pumpAndSettle();
     return last;
   }
-
-  Directory? testStoreDirectory;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -74,6 +78,7 @@ void main() {
   testWidgets('drawer routes to rank, compare, clips and sync pages', (tester) async {
     await tester.pumpWidget(const RaadApp());
     await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
 
     Future<void> openPage(String label) async {
       await tester.tap(find.byIcon(Icons.menu));
