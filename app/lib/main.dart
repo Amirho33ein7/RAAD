@@ -902,6 +902,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _addClip() async {
     await _ensureLocalReady();
+    if (!mounted) return;
     final url = await showDialog<String>(context: context, builder: (_) => const _AddClipDialog());
     if (url == null || url.isEmpty) return;
     final parsed = Uri.tryParse(url);
@@ -1042,6 +1043,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _editClip(Map<String, dynamic> clip) async {
     await _ensureLocalReady();
+    if (!mounted) return;
     final meta = await showDialog<Map<String, String>>(
       context: context,
       builder: (_) => _EditClipDialog(
@@ -1159,6 +1161,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _clearHistory() async {
     await _ensureLocalReady();
+    if (!mounted) return;
     final yes = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('پاک‌کردن تاریخچه؟'),
       content: const Text('رکوردهای ذخیره‌شده روی همین دستگاه حذف می‌شوند.'),
@@ -1179,6 +1182,7 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _editManualProfile() async {
     await _ensureLocalReady();
+    if (!mounted) return;
     final result = await showDialog<Map<String, String>>(
       context: context,
       builder: (_) => _ManualProfileDialog(initial: _manualProfile),
