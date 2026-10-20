@@ -291,9 +291,16 @@ class _RaadHomeState extends State<RaadHome> {
       if (!mounted) return;
       setState(() { _profile = result; _profileQuery = q; });
       try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('raad.profileCache.v1', jsonEncode(result));
-        await prefs.setString('raad.lastProfileQuery.v1', q);
+        await _localStore.saveValues(<String, dynamic>{
+          'profileCache': result,
+          'lastProfileQuery': q,
+        });
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('raad.profileCache.v1', jsonEncode(result));
+          await prefs.setString('raad.lastProfileQuery.v1', q);
+        } catch (_) {}
+        await _syncExternalBackup();
       } catch (_) {}
       await _recordEvent('پروفایل ' + q + ' دریافت شد.');
     } catch (e) {
@@ -304,8 +311,24 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _persistSavedPlayers(List<Map<String, dynamic>> rows) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList('raad.savedPlayers.v1', rows.map(jsonEncode).toList());
+    await _localStore.saveValue('savedPlayers', rows);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = rows.map(jsonEncode).toList();
+      final wrote = await prefs.setStringList('raad.savedPlayers.v1', encoded);
+      final readBack = prefs.getStringList('raad.savedPlayers.v1');
+      if (!wrote || readBack == null ||
+          jsonEncode(readBack) != jsonEncode(encoded)) {
+        // The durable JSON record is primary; keep the app usable if the
+        // preferences mirror cannot be written on this device.
+      }
+    } catch (_) {}
+    await _syncExternalBackup();
+    final verification = await _localStore.read();
+    if (verification == null ||
+        jsonEncode(verification['savedPlayers']) != jsonEncode(rows)) {
+      throw const FileSystemException('ذخیرهٔ پایدار پروفایل‌ها تأیید نشد.');
+    }
   }
 
   String _savedPlayerIdentity(Map<String, dynamic> row) {
@@ -380,9 +403,16 @@ class _RaadHomeState extends State<RaadHome> {
       _page = 1;
     });
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('raad.profileCache.v1', jsonEncode(profile));
-      await prefs.setString('raad.lastProfileQuery.v1', query);
+      await _localStore.saveValues(<String, dynamic>{
+        'profileCache': profile,
+        'lastProfileQuery': query,
+      });
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('raad.profileCache.v1', jsonEncode(profile));
+        await prefs.setString('raad.lastProfileQuery.v1', query);
+      } catch (_) {}
+      await _syncExternalBackup();
     } catch (_) {}
   }
 
@@ -423,8 +453,12 @@ class _RaadHomeState extends State<RaadHome> {
     final next = [timestamp + ' — ' + message, ..._events].take(100).toList();
     if (mounted) setState(() => _events = next);
     try {
-      final p = await SharedPreferences.getInstance();
-      await p.setStringList('raad.events.v1', next);
+      await _localStore.saveValue('events', next);
+      try {
+        final p = await SharedPreferences.getInstance();
+        await p.setStringList('raad.events.v1', next);
+      } catch (_) {}
+      await _syncExternalBackup();
     } catch (_) {}
   }
 
@@ -445,13 +479,21 @@ class _RaadHomeState extends State<RaadHome> {
     }
     final next = [snapshot, ..._rankHistory].take(50).toList();
     try {
-      final p = await SharedPreferences.getInstance();
-      await p.setStringList('raad.rankHistory.v1', next.map(jsonEncode).toList());
+      await _localStore.saveValue('rankHistory', next);
+      try {
+        final p = await SharedPreferences.getInstance();
+        await p.setStringList('raad.rankHistory.v1', next.map(jsonEncode).toList());
+      } catch (_) {}
+      final verification = await _localStore.read();
+      if (verification == null ||
+          jsonEncode(verification['rankHistory']) != jsonEncode(next)) {
+        throw const FileSystemException('ذخیرهٔ پایدار تاریخچهٔ رنک تأیید نشد.');
+      }
       if (!mounted) return;
       setState(() => _rankHistory = next);
       await _recordEvent('رکورد رنک روی دستگاه ذخیره شد.');
-      _toast('رکورد روی همین دستگاه ذخیره شد.');
-    } catch (_) { _toast('ذخیرهٔ رکورد ناموفق بود.'); }
+      _toast('رکورد رنک روی دستگاه ذخیره شد.');
+    } catch (_) { _toast('ذخیرهٔ رکورد ناموفق بود؛ فضای خالی دستگاه را بررسی کن.'); }
   }
 
   List<_LevelProgressEntry> _levelProgressEntries() {
@@ -614,16 +656,20 @@ class _RaadHomeState extends State<RaadHome> {
   }
 
   Future<void> _persistClips(List<Map<String, dynamic>> rows) async {
-    final prefs = await SharedPreferences.getInstance();
-    final encoded = rows.map(jsonEncode).toList();
-    final didWrite = await prefs.setStringList('raad.clips.v2', encoded);
-    final verified = prefs.getStringList('raad.clips.v2');
-    if (!didWrite ||
-        verified == null ||
-        verified.length != encoded.length ||
-        !List.generate(encoded.length, (index) => verified[index] == encoded[index]).every((same) => same)) {
-      throw StateError('ذخیرهٔ اطلاعات کتابخانهٔ کلیپ تأیید نشد.');
+    await _localStore.saveValue('clips', rows);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final encoded = rows.map(jsonEncode).toList();
+      await prefs.setStringList('raad.clips.v2', encoded);
+    } catch (_) {
+      // The verified local JSON store is the primary copy.
     }
+    final verified = await _localStore.read();
+    if (verified == null ||
+        jsonEncode(verified['clips']) != jsonEncode(rows)) {
+      throw StateError('ذخیرهٔ پایدار اطلاعات کتابخانهٔ کلیپ تأیید نشد.');
+    }
+    await _syncExternalBackup();
   }
 
   Future<void> _addClip() async {
@@ -845,8 +891,12 @@ class _RaadHomeState extends State<RaadHome> {
       ],
     ));
     if (yes != true) return;
-    final p = await SharedPreferences.getInstance();
-    await p.remove('raad.rankHistory.v1');
+    await _localStore.saveValue('rankHistory', <Map<String, dynamic>>[]);
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setStringList('raad.rankHistory.v1', <String>[]);
+    } catch (_) {}
+    await _syncExternalBackup();
     if (mounted) setState(() => _rankHistory = []);
   }
 
@@ -858,8 +908,18 @@ class _RaadHomeState extends State<RaadHome> {
     if (result == null) return;
     final next = <String, dynamic>{};
     result.forEach((key, value) { if (value.trim().isNotEmpty) next[key] = value.trim(); });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('raad.manualProfile.v1', jsonEncode(next));
+    await _localStore.saveValue('manualProfile', next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('raad.manualProfile.v1', jsonEncode(next));
+    } catch (_) {}
+    final verified = await _localStore.read();
+    if (verified == null ||
+        jsonEncode(verified['manualProfile']) != jsonEncode(next)) {
+      _toast('ذخیرهٔ پایدار اطلاعات دستی تأیید نشد.');
+      return;
+    }
+    await _syncExternalBackup();
     if (!mounted) return;
     setState(() => _manualProfile = next);
     await _recordEvent('اطلاعات دستی پروفایل به‌روزرسانی شد.');
