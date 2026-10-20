@@ -138,71 +138,137 @@ class _RaadHomeState extends State<RaadHome> {
 
   Future<void> _loadLocal() async {
     try {
-      final p = await SharedPreferences.getInstance();
-      final rows = <Map<String, dynamic>>[];
-      for (final raw in p.getStringList('raad.rankHistory.v1') ?? <String>[]) {
-        try {
-          final value = jsonDecode(raw);
-          if (value is Map) rows.add(Map<String, dynamic>.from(value));
-        } catch (_) {}
-      }
+      final prefs = await SharedPreferences.getInstance();
+      final durable = await _localStore.read() ?? <String, dynamic>{};
 
-      final clipRows = <Map<String, dynamic>>[];
-      final storedClips = p.getStringList('raad.clips.v2') ??
-          p.getStringList('raad.clips.v1') ?? <String>[];
-      for (final raw in storedClips) {
-        try {
-          final value = jsonDecode(raw);
-          if (value is Map) {
-            clipRows.add(Map<String, dynamic>.from(value));
+      List<Map<String, dynamic>> readRows(
+        String durableKey,
+        String legacyKey, {
+        bool allowLegacyUrls = false,
+      }) {
+        final source = durable.containsKey(durableKey)
+            ? durable[durableKey]
+            : prefs.getStringList(legacyKey);
+        final result = <Map<String, dynamic>>[];
+        if (source is! List) return result;
+
+        for (final item in source) {
+          if (item is Map) {
+            result.add(Map<String, dynamic>.from(item));
             continue;
           }
-        } catch (_) {
-          // Version 1 stored plain URLs instead of JSON objects.
+          if (item is! String) continue;
+          try {
+            final decoded = jsonDecode(item);
+            if (decoded is Map) {
+              result.add(Map<String, dynamic>.from(decoded));
+              continue;
+            }
+          } catch (_) {
+            // The oldest clip list stored plain URLs rather than JSON objects.
+          }
+          if (allowLegacyUrls) {
+            final uri = Uri.tryParse(item);
+            if (uri != null &&
+                uri.hasAuthority &&
+                const {'http', 'https'}.contains(uri.scheme)) {
+              result.add({
+                'type': 'link',
+                'url': item,
+                'title': item,
+                'description': '',
+                'created_at': '',
+              });
+            }
+          }
         }
-        final uri = Uri.tryParse(raw);
-        if (uri != null && uri.hasAuthority && const {'http', 'https'}.contains(uri.scheme)) {
-          clipRows.add({'type': 'link', 'url': raw, 'title': raw, 'description': '', 'created_at': ''});
-        }
+        return result;
       }
 
-      Map<String, dynamic> parseStoredMap(String key) {
-        try {
-          final decoded = jsonDecode(p.getString(key) ?? '');
-          if (decoded is Map) return Map<String, dynamic>.from(decoded);
-        } catch (_) {}
+      Map<String, dynamic> readMap(String durableKey, String legacyKey) {
+        final source = durable.containsKey(durableKey)
+            ? durable[durableKey]
+            : prefs.getString(legacyKey);
+        if (source is Map) return Map<String, dynamic>.from(source);
+        if (source is String) {
+          try {
+            final decoded = jsonDecode(source);
+            if (decoded is Map) return Map<String, dynamic>.from(decoded);
+          } catch (_) {}
+        }
         return <String, dynamic>{};
       }
 
-      final savedRows = <Map<String, dynamic>>[];
-      for (final raw in p.getStringList('raad.savedPlayers.v1') ?? <String>[]) {
-        try {
-          final value = jsonDecode(raw);
-          if (value is Map && value['profile'] is Map && value['query'] != null) {
-            savedRows.add(Map<String, dynamic>.from(value));
-          }
-        } catch (_) {}
+      final rows = readRows('rankHistory', 'raad.rankHistory.v1');
+      final clipRows = readRows(
+        'clips',
+        'raad.clips.v2',
+        allowLegacyUrls: true,
+      );
+      if (clipRows.isEmpty && !durable.containsKey('clips')) {
+        clipRows.addAll(readRows(
+          'clips',
+          'raad.clips.v1',
+          allowLegacyUrls: true,
+        ));
+      }
+      final savedRows = readRows('savedPlayers', 'raad.savedPlayers.v1')
+          .where((row) =>
+              row['profile'] is Map && row['query'] != null)
+          .toList();
+      final eventsSource = durable.containsKey('events')
+          ? durable['events']
+          : prefs.getStringList('raad.events.v1');
+      final events = eventsSource is List
+          ? eventsSource.map((event) => event.toString()).take(100).toList()
+          : <String>[];
+      final manualProfile = readMap('manualProfile', 'raad.manualProfile.v1');
+      final cachedProfile = readMap('profileCache', 'raad.profileCache.v1');
+      final lastQuery = durable.containsKey('lastProfileQuery')
+          ? durable['lastProfileQuery']?.toString()
+          : prefs.getString('raad.lastProfileQuery.v1');
+      final loadedState = <String, dynamic>{
+        'rankHistory': rows,
+        'savedPlayers': savedRows,
+        'clips': clipRows,
+        'events': events,
+        'manualProfile': manualProfile,
+        'profileCache': cachedProfile,
+        'lastProfileQuery': lastQuery,
+      };
+
+      // One-time migration from existing SharedPreferences plus fill missing
+      // keys without overwriting a concurrent/newer save.
+      if (loadedState.keys.any((key) => !durable.containsKey(key))) {
+        final latest = await _localStore.read() ?? <String, dynamic>{};
+        for (final entry in loadedState.entries) {
+          latest.putIfAbsent(entry.key, () => entry.value);
+        }
+        await _localStore.saveAll(latest);
       }
 
-      Map<String, dynamic>? cachedProfile;
-      try {
-        final decoded = jsonDecode(p.getString('raad.profileCache.v1') ?? '');
-        if (decoded is Map) cachedProfile = Map<String, dynamic>.from(decoded);
-      } catch (_) {}
       if (!mounted) return;
+      final cached = cachedProfile.isEmpty ? null : cachedProfile;
       setState(() {
         _rankHistory = rows;
         _savedPlayers = savedRows;
         _clips = clipRows;
-        _events = p.getStringList('raad.events.v1') ?? [];
-        _manualProfile = parseStoredMap('raad.manualProfile.v1');
-        _profile = cachedProfile;
-        _profileQuery = p.getString('raad.lastProfileQuery.v1') ??
-            cachedProfile?['shortId']?.toString() ?? cachedProfile?['nickname']?.toString();
+        _events = events;
+        _manualProfile = manualProfile;
+        _profile = cached;
+        _profileQuery = (lastQuery?.trim().isNotEmpty == true)
+            ? lastQuery
+            : cached?['shortId']?.toString() ?? cached?['nickname']?.toString();
         _query.text = _profileQuery ?? '';
       });
-    } catch (_) {
-      _recordEvent('بارگذاری اطلاعات محلی ناموفق بود.');
+    } catch (error) {
+      // Do not replace existing state with empty collections on a read failure.
+      if (mounted) {
+        setState(() {
+          _fileAccessMessage ??=
+              'بارگذاری داده‌های محلی کامل نشد؛ اطلاعات ذخیره‌شده پاک نشده‌اند.';
+        });
+      }
     }
   }
 
