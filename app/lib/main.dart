@@ -15,7 +15,7 @@ import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.6+10';
+const String raadAppVersion = '0.4.7+11';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFFD6F35A);
 const panel = Color(0xFF171B12);
@@ -82,6 +82,7 @@ class _RaadHomeState extends State<RaadHome> {
   // a slow first load can overwrite the only recoverable copy with stale state.
   bool _externalBackupInitialized = false;
   bool _localReady = false;
+  bool _localLoadFailed = false;
   late final LocalPersistenceService _localStore =
       widget.persistence ?? LocalPersistenceService();
   int _page = 0;
@@ -125,6 +126,11 @@ class _RaadHomeState extends State<RaadHome> {
   Future<void> _ensureLocalReady() async {
     if (_localReady) return;
     await _localLoadFuture;
+    if (!_localReady) {
+      throw const FileSystemException(
+        'اطلاعات محلی باز نشد؛ برای جلوگیری از بازنویسی اطلاعات، ابتدا بازیابی را دوباره امتحان کن.',
+      );
+    }
   }
 
   Future<bool> _ensureFileSavingAccess({bool startup = false}) async {
@@ -400,8 +406,15 @@ class _RaadHomeState extends State<RaadHome> {
       setState(() => _localReady = false);
     }
     try {
-      final prefs = await SharedPreferences.getInstance();
+      // Read the durable JSON file first. SharedPreferences is only a legacy
+      // mirror and must never be a prerequisite for restoring the primary data.
       final durable = await _localStore.read() ?? <String, dynamic>{};
+      SharedPreferences? prefs;
+      try {
+        prefs = await SharedPreferences.getInstance();
+      } catch (_) {
+        // Continue from the verified JSON file even when the mirror is unavailable.
+      }
 
       List<Map<String, dynamic>> readRows(
         String durableKey,
@@ -409,7 +422,7 @@ class _RaadHomeState extends State<RaadHome> {
         bool allowLegacyUrls = false,
       }) {
         final durableValue = durable[durableKey];
-        final legacyValue = prefs.getStringList(legacyKey);
+        final legacyValue = prefs?.getStringList(legacyKey);
         // If the durable copy contains an empty list but the old mirror still
         // has records, recover the records instead of making them disappear.
         final source = durableValue is List && durableValue.isNotEmpty
@@ -457,7 +470,7 @@ class _RaadHomeState extends State<RaadHome> {
 
       Map<String, dynamic> readMap(String durableKey, String legacyKey) {
         final durableValue = durable[durableKey];
-        final legacyValue = prefs.getString(legacyKey);
+        final legacyValue = prefs?.getString(legacyKey);
         final durableIsEmpty = durableValue == null ||
             (durableValue is Map && durableValue.isEmpty) ||
             (durableValue is String && durableValue.trim().isEmpty);
@@ -496,7 +509,7 @@ class _RaadHomeState extends State<RaadHome> {
               row['profile'] is Map && row['query'] != null)
           .toList();
       final durableEvents = durable['events'];
-      final preferenceEvents = prefs.getStringList('raad.events.v1');
+      final preferenceEvents = prefs?.getStringList('raad.events.v1');
       final eventsSource = durableEvents is List && durableEvents.isNotEmpty
           ? durableEvents
           : preferenceEvents != null && preferenceEvents.isNotEmpty
@@ -510,7 +523,7 @@ class _RaadHomeState extends State<RaadHome> {
       final manualProfile = readMap('manualProfile', 'raad.manualProfile.v1');
       final cachedProfile = readMap('profileCache', 'raad.profileCache.v1');
       final durableQuery = durable['lastProfileQuery']?.toString();
-      final preferenceQuery = prefs.getString('raad.lastProfileQuery.v1');
+      final preferenceQuery = prefs?.getString('raad.lastProfileQuery.v1');
       final lastQuery = (durableQuery?.trim().isNotEmpty == true)
           ? durableQuery
           : (preferenceQuery?.trim().isNotEmpty == true)
@@ -561,15 +574,27 @@ class _RaadHomeState extends State<RaadHome> {
         }
       }
     } catch (error) {
-      // Do not replace existing state with empty collections on a read failure.
+      // Never report an unreadable store as a successfully loaded empty app.
+      // Keep write-capable screens blocked until the user retries recovery.
       if (mounted) {
         setState(() {
-          _localReady = true;
+          _localReady = false;
+          _localLoadFailed = true;
           _fileAccessMessage =
               'بارگذاری داده‌های محلی کامل نشد: $error';
         });
       }
     }
+  }
+
+  Future<void> _retryLocalLoad() async {
+    if (!mounted) return;
+    setState(() {
+      _localLoadFailed = false;
+      _fileAccessMessage = null;
+    });
+    _localLoadFuture = _loadLocal();
+    await _localLoadFuture;
   }
 
   Future<Map<String, dynamic>> _fetchProfile(String q) =>
@@ -1497,6 +1522,36 @@ class _RaadHomeState extends State<RaadHome> {
 
   Widget _body() {
     if (!_localReady) {
+      if (_localLoadFailed) {
+        return ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const SizedBox(height: 56),
+            const Icon(Icons.warning_amber_rounded, size: 48, color: accent),
+            const SizedBox(height: 18),
+            const Center(
+              child: Text(
+                'اطلاعات ذخیره‌شده باز نشد',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _fileAccessMessage ??
+                  'فایل اطلاعات قابل خواندن نیست. هنوز چیزی را با فهرست خالی جایگزین نکرده‌ایم.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+            const SizedBox(height: 18),
+            FilledButton.icon(
+              onPressed: _retryLocalLoad,
+              icon: const Icon(Icons.refresh),
+              label: const Text('تلاش دوباره برای بازیابی'),
+            ),
+          ],
+        );
+      }
       return ListView(
         padding: const EdgeInsets.all(24),
         children: const [
