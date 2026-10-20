@@ -49,7 +49,7 @@ jobs:
           source = manifest.read_text(encoding="utf-8")
           permissions = [
               '<uses-permission android:name="android.permission.INTERNET" />',
-              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />',
+              '',
           ]
           for permission in permissions:
               if permission not in source:
@@ -65,17 +65,11 @@ jobs:
           cat > /tmp/raad-main-activity.kt <<'KOTLIN'
           package __RAAD_PACKAGE__
           
-          import android.Manifest
-          import android.content.ContentValues
-          import android.content.pm.PackageManager
+          import android.content.Intent
           import android.net.Uri
           import android.os.Build
-          import android.os.Environment
-          import android.provider.MediaStore
+          import android.provider.DocumentsContract
           import android.database.Cursor
-          import androidx.core.app.ActivityCompat
-          import androidx.core.content.ContextCompat
-          import android.content.ContentResolver
           import io.flutter.embedding.android.FlutterActivity
           import io.flutter.embedding.engine.FlutterEngine
           import io.flutter.plugin.common.MethodCall
@@ -84,13 +78,20 @@ jobs:
           import java.io.FileInputStream
           import java.io.FileOutputStream
           import java.io.IOException
+          import java.io.InputStream
           
           class MainActivity : FlutterActivity() {
               private val channelName = "raad/file_storage"
-              private var pendingAccessResult: MethodChannel.Result? = null
+              private var pendingFolderResult: MethodChannel.Result? = null
+          
+              private val storagePrefs by lazy {
+                  getSharedPreferences("raad_file_storage", MODE_PRIVATE)
+              }
           
               companion object {
-                  private const val STORAGE_PERMISSION_REQUEST = 9652
+                  private const val PICK_FOLDER_REQUEST = 9652
+                  private const val BACKUP_FILE_NAME = "raad_profile_backup.json"
+                  private const val RAAD_FOLDER_NAME = "RAAD"
               }
           
               override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -101,188 +102,428 @@ jobs:
                               "ensureAccess" -> ensureAccess(result)
                               "saveVideo" -> saveVideo(call, result)
                               "deleteSavedVideo" -> deleteSavedVideo(call, result)
+                              "readBackup" -> readBackup(result)
+                              "writeBackup" -> writeBackup(call, result)
+                              "restoreVideoToPrivate" -> restoreVideoToPrivate(call, result)
                               else -> result.notImplemented()
                           }
                       }
               }
           
-              private fun ensureAccess(result: MethodChannel.Result) {
-                  // Android 10+ supports creating our own public Downloads files through
-                  // MediaStore. Broad MANAGE_EXTERNAL_STORAGE permission is not needed.
-                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                      result.success(mapOf(
-                          "granted" to true,
-                          "message" to "ذخیرهٔ فایل در Download/RAAD با دسترسی امن سیستم آماده است."
-                      ))
-                      return
-                  }
-          
-                  if (ContextCompat.checkSelfPermission(
-                          this, Manifest.permission.WRITE_EXTERNAL_STORAGE
-                      ) == PackageManager.PERMISSION_GRANTED) {
-                      result.success(mapOf(
-                          "granted" to true,
-                          "message" to "مجوز ذخیره‌سازی فایل صادر شده است."
-                      ))
-                      return
-                  }
-          
-                  if (pendingAccessResult != null) {
-                      result.error("permission_in_progress", "درخواست دسترسی ذخیره‌سازی در حال نمایش است.", null)
-                      return
-                  }
-                  pendingAccessResult = result
-                  ActivityCompat.requestPermissions(
-                      this,
-                      arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                      STORAGE_PERMISSION_REQUEST
-                  )
+              private fun persistedTreeUri(): Uri? {
+                  val raw = storagePrefs.getString("treeUri", null) ?: return null
+                  val uri = Uri.parse(raw)
+                  val grant = contentResolver.persistedUriPermissions.firstOrNull {
+                      it.uri == uri && it.isWritePermission
+                  } ?: return null
+                  if (!grant.isReadPermission || !grant.isWritePermission) return null
+                  return uri
               }
           
-              override fun onRequestPermissionsResult(
-                  requestCode: Int,
-                  permissions: Array<out String>,
-                  grantResults: IntArray
-              ) {
-                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-                  if (requestCode == STORAGE_PERMISSION_REQUEST) {
-                      val granted = grantResults.isNotEmpty() &&
-                          grantResults[0] == PackageManager.PERMISSION_GRANTED
-                      val pending = pendingAccessResult
-                      pendingAccessResult = null
-                      pending?.success(mapOf(
-                          "granted" to granted,
-                          "message" to if (granted)
-                              "مجوز ذخیره‌سازی فایل صادر شده است."
-                          else
-                              "مجوز ذخیره‌سازی فایل رد شد. از تنظیمات اندروید اجازه را فعال کن."
+              private fun selectedFolderUri(): Uri? {
+                  val treeUri = persistedTreeUri() ?: return null
+                  val documentId = storagePrefs.getString("folderDocumentId", null)
+                      ?: DocumentsContract.getTreeDocumentId(treeUri)
+                  return DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+              }
+          
+              private fun ensureAccess(result: MethodChannel.Result) {
+                  val treeUri = persistedTreeUri()
+                  val folderUri = selectedFolderUri()
+                  if (treeUri != null && folderUri != null) {
+                      val name = storagePrefs.getString("folderDisplayName", "RAAD") ?: "RAAD"
+                      result.success(mapOf(
+                          "granted" to true,
+                          "folderName" to name,
+                          "message" to "دسترسی پایدار پوشهٔ $name فعال است."
+                      ))
+                      return
+                  }
+          
+                  if (pendingFolderResult != null) {
+                      result.error("folder_picker_in_progress", "انتخاب پوشه در حال انجام است.", null)
+                      return
+                  }
+          
+                  pendingFolderResult = result
+                  try {
+                      val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                          addFlags(
+                              Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                              Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                              Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                              Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+                          )
+                          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                              val documentsUri = DocumentsContract.buildDocumentUri(
+                                  "com.android.externalstorage.documents",
+                                  "primary:Documents"
+                              )
+                              putExtra(DocumentsContract.EXTRA_INITIAL_URI, documentsUri)
+                          }
+                      }
+                      startActivityForResult(intent, PICK_FOLDER_REQUEST)
+                  } catch (error: Exception) {
+                      val pending = pendingFolderResult
+                      pendingFolderResult = null
+                      pending?.error(
+                          "folder_picker_failed",
+                          error.message ?: "بازکردن انتخاب‌گر پوشه ناموفق بود.",
+                          null
+                      )
+                  }
+              }
+          
+              @Deprecated("The FlutterActivity result callback is used for the system folder picker.")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode != PICK_FOLDER_REQUEST) return
+          
+                  val pending = pendingFolderResult ?: return
+                  pendingFolderResult = null
+                  val treeUri = if (resultCode == RESULT_OK) data?.data else null
+                  if (treeUri == null) {
+                      pending.success(mapOf(
+                          "granted" to false,
+                          "message" to "پوشه‌ای انتخاب نشد؛ برای ذخیرهٔ کلیپ باید یک پوشه را انتخاب کنی."
+                      ))
+                      return
+                  }
+          
+                  try {
+                      val flags = (data.flags and
+                          (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+                      if ((flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) == 0) {
+                          throw SecurityException("سیستم اجازهٔ نوشتن در پوشه را برنگرداند.")
+                      }
+                      contentResolver.takePersistableUriPermission(treeUri, flags)
+          
+                      val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+                      val rootName = queryDisplayName(treeUri, rootId) ?: "پوشهٔ انتخاب‌شده"
+                      val raadId = if (rootName.equals(RAAD_FOLDER_NAME, ignoreCase = true)) {
+                          rootId
+                      } else {
+                          findChildDocumentId(treeUri, rootId, RAAD_FOLDER_NAME, requireDirectory = true)
+                              ?: createChildDirectory(treeUri, rootId, RAAD_FOLDER_NAME)
+                      }
+                      val displayName = if (raadId == rootId) rootName else "$rootName/$RAAD_FOLDER_NAME"
+          
+                      storagePrefs.edit()
+                          .putString("treeUri", treeUri.toString())
+                          .putString("folderDocumentId", raadId)
+                          .putString("folderDisplayName", displayName)
+                          .apply()
+          
+                      if (persistedTreeUri() == null || selectedFolderUri() == null) {
+                          throw SecurityException("مجوز پوشه بعد از انتخاب به‌صورت پایدار ثبت نشد.")
+                      }
+                      pending.success(mapOf(
+                          "granted" to true,
+                          "folderName" to displayName,
+                          "message" to "مجوز پایدار صادر شد. کلیپ‌ها در پوشهٔ $displayName ذخیره می‌شوند."
+                      ))
+                  } catch (error: Exception) {
+                      storagePrefs.edit()
+                          .remove("treeUri")
+                          .remove("folderDocumentId")
+                          .remove("folderDisplayName")
+                          .apply()
+                      pending.success(mapOf(
+                          "granted" to false,
+                          "message" to (error.message ?: "ثبت مجوز پایدار پوشه ناموفق بود.")
                       ))
                   }
+              }
+          
+              private fun queryDisplayName(treeUri: Uri, documentId: String): String? {
+                  val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+                  var cursor: Cursor? = null
+                  return try {
+                      cursor = contentResolver.query(
+                          documentUri,
+                          arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                          null,
+                          null,
+                          null
+                      )
+                      if (cursor != null && cursor.moveToFirst()) cursor.getString(0) else null
+                  } finally {
+                      cursor?.close()
+                  }
+              }
+          
+              private data class ChildDocument(
+                  val id: String,
+                  val name: String,
+                  val mimeType: String
+              )
+          
+              private fun childDocuments(treeUri: Uri, parentDocumentId: String): List<ChildDocument> {
+                  val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                      treeUri, parentDocumentId
+                  )
+                  var cursor: Cursor? = null
+                  val result = mutableListOf<ChildDocument>()
+                  try {
+                      cursor = contentResolver.query(
+                          childrenUri,
+                          arrayOf(
+                              DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                              DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                              DocumentsContract.Document.COLUMN_MIME_TYPE
+                          ),
+                          null,
+                          null,
+                          null
+                      )
+                      if (cursor != null) {
+                          val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                          val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                          val typeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                          while (cursor.moveToNext()) {
+                              result.add(ChildDocument(
+                                  cursor.getString(idIndex),
+                                  cursor.getString(nameIndex),
+                                  cursor.getString(typeIndex)
+                              ))
+                          }
+                      }
+                  } finally {
+                      cursor?.close()
+                  }
+                  return result
+              }
+          
+              private fun findChildDocumentId(
+                  treeUri: Uri,
+                  parentDocumentId: String,
+                  name: String,
+                  requireDirectory: Boolean
+              ): String? {
+                  return childDocuments(treeUri, parentDocumentId).firstOrNull {
+                      it.name == name &&
+                          (!requireDirectory || it.mimeType == DocumentsContract.Document.MIME_TYPE_DIR)
+                  }?.id
+              }
+          
+              private fun createChildDirectory(
+                  treeUri: Uri,
+                  parentDocumentId: String,
+                  name: String
+              ): String {
+                  val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, parentDocumentId)
+                  val createdUri = DocumentsContract.createDocument(
+                      contentResolver,
+                      parentUri,
+                      DocumentsContract.Document.MIME_TYPE_DIR,
+                      name
+                  ) ?: throw IOException("پوشهٔ RAAD در محل انتخاب‌شده ساخته نشد.")
+                  return DocumentsContract.getDocumentId(createdUri)
+              }
+          
+              private fun findFileUri(name: String): Uri? {
+                  val treeUri = persistedTreeUri() ?: return null
+                  val folderId = storagePrefs.getString(
+                      "folderDocumentId", DocumentsContract.getTreeDocumentId(treeUri)
+                  ) ?: return null
+                  val child = childDocuments(treeUri, folderId).firstOrNull {
+                      it.name == name && it.mimeType != DocumentsContract.Document.MIME_TYPE_DIR
+                  } ?: return null
+                  return DocumentsContract.buildDocumentUriUsingTree(treeUri, child.id)
+              }
+          
+              private fun safeFileName(value: String): String =
+                  File(value).name.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                      .ifBlank { "raad_clip_${System.currentTimeMillis()}.mp4" }
+          
+              private fun mimeFor(name: String): String {
+                  return when (name.substringAfterLast('.', "").lowercase()) {
+                      "mov" -> "video/quicktime"
+                      "mkv" -> "video/x-matroska"
+                      "webm" -> "video/webm"
+                      "3gp" -> "video/3gpp"
+                      else -> "video/mp4"
+                  }
+              }
+          
+              private fun countStream(stream: InputStream): Long {
+                  var total = 0L
+                  val buffer = ByteArray(1024 * 1024)
+                  while (true) {
+                      val count = stream.read(buffer)
+                      if (count < 0) break
+                      total += count.toLong()
+                  }
+                  return total
+              }
+          
+              private fun querySize(uri: Uri): Long {
+                  var cursor: Cursor? = null
+                  try {
+                      cursor = contentResolver.query(
+                          uri,
+                          arrayOf(DocumentsContract.Document.COLUMN_SIZE),
+                          null,
+                          null,
+                          null
+                      )
+                      if (cursor != null && cursor.moveToFirst()) {
+                          val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                          if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+                      }
+                  } catch (_: Exception) {
+                      // Some document providers omit metadata; count bytes by streaming below.
+                  } finally {
+                      cursor?.close()
+                  }
+                  contentResolver.openInputStream(uri)?.use { return countStream(it) }
+                      ?: throw IOException("فایل ذخیره‌شده دوباره قابل‌خواندن نیست.")
+              }
+          
+              private fun copyToDocument(source: File, targetUri: Uri): Long {
+                  val output = contentResolver.openOutputStream(targetUri, "w")
+                      ?: throw IOException("بازکردن فایل مقصد برای نوشتن ممکن نشد.")
+                  var copied = 0L
+                  FileInputStream(source).use { input ->
+                      output.use { target -> copied = input.copyTo(target) }
+                  }
+                  return copied
               }
           
               private fun saveVideo(call: MethodCall, result: MethodChannel.Result) {
+                  var createdUri: Uri? = null
                   try {
                       val sourcePath = call.argument<String>("sourcePath")
                           ?: throw IllegalArgumentException("مسیر ویدیوی مبدأ ارسال نشده است.")
                       val requestedName = call.argument<String>("fileName")
                           ?: throw IllegalArgumentException("نام فایل ارسال نشده است.")
                       val source = File(sourcePath)
-                      if (!source.isFile || !source.exists()) {
+                      if (!source.exists() || !source.isFile) {
                           throw IOException("فایل ویدیوی مبدأ دیگر در دسترس نیست.")
                       }
                       val expectedBytes = source.length()
                       if (expectedBytes <= 0L) throw IOException("فایل ویدیوی مبدأ خالی است.")
           
-                      val safeName = File(requestedName).name
-                          .replace(Regex("[^A-Za-z0-9._-]"), "_")
-                          .ifBlank { "raad_clip_${System.currentTimeMillis()}.mp4" }
-                      val mimeType = when (safeName.substringAfterLast('.', "").lowercase()) {
-                          "mov" -> "video/quicktime"
-                          "mkv" -> "video/x-matroska"
-                          "webm" -> "video/webm"
-                          "3gp" -> "video/3gpp"
-                          else -> "video/mp4"
+                      val treeUri = persistedTreeUri()
+                          ?: throw SecurityException("دسترسی پوشهٔ ذخیره‌سازی صادر نشده است؛ پوشه را انتخاب کن.")
+                      val folderUri = selectedFolderUri()
+                          ?: throw SecurityException("پوشهٔ ذخیره‌سازی دیگر در دسترس نیست؛ دوباره انتخابش کن.")
+                      val folderId = storagePrefs.getString(
+                          "folderDocumentId", DocumentsContract.getTreeDocumentId(treeUri)
+                      ) ?: DocumentsContract.getTreeDocumentId(treeUri)
+          
+                      val originalName = safeFileName(requestedName)
+                      val dot = originalName.lastIndexOf('.')
+                      val stem = if (dot > 0) originalName.substring(0, dot) else originalName
+                      val ext = if (dot > 0) originalName.substring(dot) else ".mp4"
+                      var name = originalName
+                      var suffix = 1
+                      while (findChildDocumentId(treeUri, folderId, name, false) != null) {
+                          name = "${stem}_${suffix++}$ext"
                       }
           
-                      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          val values = ContentValues().apply {
-                              put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
-                              put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                              put(
-                                  MediaStore.MediaColumns.RELATIVE_PATH,
-                                  Environment.DIRECTORY_DOWNLOADS + "/RAAD"
-                              )
-                              put(MediaStore.MediaColumns.IS_PENDING, 1)
-                          }
-                          val uri = contentResolver.insert(
-                              MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-                          ) ?: throw IOException("سیستم فایل جدید را در پوشهٔ دانلود نساخت.")
+                      createdUri = DocumentsContract.createDocument(
+                          contentResolver, folderUri, mimeFor(name), name
+                      ) ?: throw IOException("فایل جدید در پوشهٔ انتخاب‌شده ساخته نشد.")
           
-                          try {
-                              val output = contentResolver.openOutputStream(uri, "w")
-                                  ?: throw IOException("نوشتن فایل در پوشهٔ دانلود ممکن نشد.")
-                              FileInputStream(source).use { input ->
-                                  output.use { target -> input.copyTo(target) }
-                              }
-          
-                              val complete = ContentValues().apply {
-                                  put(MediaStore.MediaColumns.IS_PENDING, 0)
-                              }
-                              contentResolver.update(uri, complete, null, null)
-          
-                              val actualBytes = querySize(contentResolver, uri)
-                              if (actualBytes != expectedBytes) {
-                                  throw IOException(
-                                      "اندازهٔ فایل ذخیره‌شده با مبدأ برابر نیست؛ مبدأ=$expectedBytes مقصد=$actualBytes"
-                                  )
-                              }
-                              result.success(mapOf(
-                                  "uri" to uri.toString(),
-                                  "displayPath" to "Download/RAAD/$safeName",
-                                  "fileName" to safeName,
-                                  "bytes" to actualBytes
-                              ))
-                          } catch (error: Exception) {
-                              contentResolver.delete(uri, null, null)
-                              throw error
-                          }
-                      } else {
-                          if (ContextCompat.checkSelfPermission(
-                                  this, Manifest.permission.WRITE_EXTERNAL_STORAGE
-                              ) != PackageManager.PERMISSION_GRANTED) {
-                              throw SecurityException("مجوز ذخیره‌سازی فایل صادر نشده است.")
-                          }
-                          val downloads = Environment.getExternalStoragePublicDirectory(
-                              Environment.DIRECTORY_DOWNLOADS
-                          )
-                          val directory = File(downloads, "RAAD")
-                          if (!directory.exists() && !directory.mkdirs()) {
-                              throw IOException("پوشهٔ Download/RAAD ساخته نشد.")
-                          }
-                          var destination = File(directory, safeName)
-                          var suffix = 1
-                          val dot = safeName.lastIndexOf('.')
-                          val stem = if (dot > 0) safeName.substring(0, dot) else safeName
-                          val extension = if (dot > 0) safeName.substring(dot) else ".mp4"
-                          while (destination.exists()) {
-                              destination = File(directory, "${stem}_${suffix++}$extension")
-                          }
-                          try {
-                              FileInputStream(source).use { input ->
-                                  FileOutputStream(destination).use { target -> input.copyTo(target) }
-                              }
-                              if (destination.length() != expectedBytes) {
-                                  throw IOException("تأیید اندازهٔ فایل ذخیره‌شده ناموفق بود.")
-                              }
-                              result.success(mapOf(
-                                  "uri" to Uri.fromFile(destination).toString(),
-                                  "displayPath" to "Download/RAAD/${destination.name}",
-                                  "fileName" to destination.name,
-                                  "bytes" to destination.length()
-                              ))
-                          } catch (error: Exception) {
-                              destination.delete()
-                              throw error
-                          }
+                      val copied = copyToDocument(source, createdUri!!)
+                      if (copied != expectedBytes) {
+                          throw IOException("اندازهٔ کپی ناقص است؛ مبدأ=$expectedBytes مقصد=$copied")
                       }
+                      val actualBytes = querySize(createdUri!!)
+                      if (actualBytes != expectedBytes) {
+                          throw IOException("تأیید اندازهٔ فایل ذخیره‌شده ناموفق بود؛ مبدأ=$expectedBytes مقصد=$actualBytes")
+                      }
+                      val folderDisplay = storagePrefs.getString("folderDisplayName", "RAAD") ?: "RAAD"
+                      result.success(mapOf(
+                          "uri" to createdUri.toString(),
+                          "displayPath" to "$folderDisplay/$name",
+                          "fileName" to name,
+                          "bytes" to actualBytes
+                      ))
                   } catch (error: Exception) {
-                      result.error("save_file_failed", error.message ?: "ذخیرهٔ فایل ناموفق بود.", null)
+                      createdUri?.let {
+                          try { contentResolver.delete(it, null, null) } catch (_: Exception) {}
+                      }
+                      result.error(
+                          "save_file_failed",
+                          error.message ?: "ذخیرهٔ فایل ناموفق بود.",
+                          null
+                      )
                   }
               }
           
-              private fun querySize(resolver: ContentResolver, uri: Uri): Long {
-                  var cursor: Cursor? = null
+              private fun writeBackup(call: MethodCall, result: MethodChannel.Result) {
                   try {
-                      cursor = resolver.query(
-                          uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null
-                      )
-                      if (cursor != null && cursor.moveToFirst()) {
-                          return cursor.getLong(0)
-                      }
-                  } finally {
-                      cursor?.close()
+                      val json = call.argument<String>("json")
+                          ?: throw IllegalArgumentException("دادهٔ پشتیبان ارسال نشده است.")
+                      val folderUri = selectedFolderUri()
+                          ?: throw SecurityException("پوشهٔ پشتیبان انتخاب نشده است.")
+                      val existing = findFileUri(BACKUP_FILE_NAME)
+                      val target = existing ?: DocumentsContract.createDocument(
+                          contentResolver, folderUri, "application/json", BACKUP_FILE_NAME
+                      ) ?: throw IOException("ساخت فایل پشتیبان در پوشه ممکن نشد.")
+                      contentResolver.openOutputStream(target, "wt")?.use { output ->
+                          output.write(json.toByteArray(Charsets.UTF_8))
+                          output.flush()
+                      } ?: throw IOException("فایل پشتیبان برای نوشتن باز نشد.")
+                      val verified = contentResolver.openInputStream(target)?.use {
+                          it.readBytes().toString(Charsets.UTF_8)
+                      } ?: throw IOException("خواندن دوبارهٔ فایل پشتیبان ناموفق بود.")
+                      if (verified != json) throw IOException("تأیید فایل پشتیبان ناموفق بود.")
+                      result.success(true)
+                  } catch (error: Exception) {
+                      result.error("backup_write_failed", error.message ?: "ذخیرهٔ پشتیبان ناموفق بود.", null)
                   }
-                  return -1L
+              }
+          
+              private fun readBackup(result: MethodChannel.Result) {
+                  try {
+                      if (selectedFolderUri() == null) {
+                          result.success(null)
+                          return
+                      }
+                      val uri = findFileUri(BACKUP_FILE_NAME)
+                      if (uri == null) {
+                          result.success(null)
+                          return
+                      }
+                      val json = contentResolver.openInputStream(uri)?.use {
+                          it.readBytes().toString(Charsets.UTF_8)
+                      }
+                      result.success(json)
+                  } catch (error: Exception) {
+                      result.error("backup_read_failed", error.message ?: "خواندن پشتیبان ناموفق بود.", null)
+                  }
+              }
+          
+              private fun restoreVideoToPrivate(call: MethodCall, result: MethodChannel.Result) {
+                  var target: File? = null
+                  try {
+                      val rawUri = call.argument<String>("uri")
+                          ?: throw IllegalArgumentException("شناسهٔ فایل کلیپ ارسال نشده است.")
+                      val targetPath = call.argument<String>("targetPath")
+                          ?: throw IllegalArgumentException("مسیر کپی خصوصی ارسال نشده است.")
+                      target = File(targetPath)
+                      target.parentFile?.mkdirs()
+                      val sourceUri = Uri.parse(rawUri)
+                      val input = contentResolver.openInputStream(sourceUri)
+                          ?: throw IOException("فایل کلیپ در پوشهٔ انتخاب‌شده پیدا نشد.")
+                      val copied = input.use { inputStream ->
+                          FileOutputStream(target!!).use { output -> inputStream.copyTo(output) }
+                      }
+                      if (copied <= 0L || target!!.length() != copied) {
+                          throw IOException("تأیید کپی کلیپ به فضای داخلی ناموفق بود.")
+                      }
+                      result.success(mapOf("path" to target!!.absolutePath, "bytes" to copied))
+                  } catch (error: Exception) {
+                      target?.let { try { if (it.exists()) it.delete() } catch (_: Exception) {} }
+                      result.error(
+                          "restore_clip_failed",
+                          error.message ?: "بازیابی کلیپ از فایل‌های گوشی ناموفق بود.",
+                          null
+                      )
+                  }
               }
           
               private fun deleteSavedVideo(call: MethodCall, result: MethodChannel.Result) {
