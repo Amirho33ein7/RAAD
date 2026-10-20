@@ -15,6 +15,12 @@ void main() {
   // File reads/writes run on real platform I/O. Pumping frames alone doesn't
   // wait for those futures, so yield to the real event loop until the resulting
   // widget appears; if it never appears, the assertion still fails.
+  Future<void> pumpRaadApp(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
+  }
+
   Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
     for (var attempt = 0; attempt < 40; attempt++) {
       if (finder.evaluate().isNotEmpty) return;
@@ -65,8 +71,7 @@ void main() {
   });
 
   testWidgets('dashboard opens without requiring the network', (tester) async {
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
 
     expect(find.text('مرکز فرماندهی بازیکن'), findsOneWidget);
@@ -76,8 +81,7 @@ void main() {
   });
 
   testWidgets('drawer routes to rank, compare, clips and sync pages', (tester) async {
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await pumpUntilFound(tester, find.text('مرکز فرماندهی بازیکن'));
 
     Future<void> openPage(String label) async {
@@ -129,8 +133,7 @@ void main() {
       ],
     });
 
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -170,8 +173,7 @@ void main() {
       'raad.lastProfileQuery.v1': 'UID-12345',
     });
 
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -212,8 +214,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
 
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -251,8 +252,7 @@ void main() {
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
 
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
@@ -346,8 +346,7 @@ void main() {
       ],
     });
 
-    await tester.pumpWidget(const RaadApp());
-    await tester.pumpAndSettle();
+    await pumpRaadApp(tester);
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
