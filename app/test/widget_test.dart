@@ -51,11 +51,12 @@ void main() {
     // continuations until after the test has already captured stale state.
     for (var attempt = 0; attempt < 40; attempt++) {
       await tester.pump();
-      last = await tester.runAsync(
-        () => LocalPersistenceService(
+      last = await tester.runAsync(() async {
+        final state = await LocalPersistenceService(
           directoryProvider: () async => directory,
-        ).read(),
-      );
+        ).read();
+        return state ?? <String, dynamic>{};
+      });
       if (last != null && predicate(last)) return last;
       await tester.pump(const Duration(milliseconds: 100));
     }
