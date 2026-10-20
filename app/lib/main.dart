@@ -318,9 +318,17 @@ class _RaadHomeState extends State<RaadHome> {
         String legacyKey, {
         bool allowLegacyUrls = false,
       }) {
-        final source = durable.containsKey(durableKey)
-            ? durable[durableKey]
-            : prefs.getStringList(legacyKey);
+        final durableValue = durable[durableKey];
+        final legacyValue = prefs.getStringList(legacyKey);
+        // If the durable copy contains an empty list but the old mirror still
+        // has records, recover the records instead of making them disappear.
+        final source = durableValue is List && durableValue.isNotEmpty
+            ? durableValue
+            : legacyValue != null && legacyValue.isNotEmpty
+                ? legacyValue
+                : durable.containsKey(durableKey)
+                    ? durableValue
+                    : legacyValue;
         final result = <Map<String, dynamic>>[];
         if (source is! List) return result;
 
@@ -358,9 +366,18 @@ class _RaadHomeState extends State<RaadHome> {
       }
 
       Map<String, dynamic> readMap(String durableKey, String legacyKey) {
-        final source = durable.containsKey(durableKey)
-            ? durable[durableKey]
-            : prefs.getString(legacyKey);
+        final durableValue = durable[durableKey];
+        final legacyValue = prefs.getString(legacyKey);
+        final durableIsEmpty = durableValue == null ||
+            (durableValue is Map && durableValue.isEmpty) ||
+            (durableValue is String && durableValue.trim().isEmpty);
+        final source = !durableIsEmpty
+            ? durableValue
+            : legacyValue != null && legacyValue.trim().isNotEmpty
+                ? legacyValue
+                : durable.containsKey(durableKey)
+                    ? durableValue
+                    : legacyValue;
         if (source is Map) return Map<String, dynamic>.from(source);
         if (source is String) {
           try {
@@ -388,17 +405,29 @@ class _RaadHomeState extends State<RaadHome> {
           .where((row) =>
               row['profile'] is Map && row['query'] != null)
           .toList();
-      final eventsSource = durable.containsKey('events')
-          ? durable['events']
-          : prefs.getStringList('raad.events.v1');
+      final durableEvents = durable['events'];
+      final preferenceEvents = prefs.getStringList('raad.events.v1');
+      final eventsSource = durableEvents is List && durableEvents.isNotEmpty
+          ? durableEvents
+          : preferenceEvents != null && preferenceEvents.isNotEmpty
+              ? preferenceEvents
+              : durable.containsKey('events')
+                  ? durableEvents
+                  : preferenceEvents;
       final events = eventsSource is List
           ? eventsSource.map((event) => event.toString()).take(100).toList()
           : <String>[];
       final manualProfile = readMap('manualProfile', 'raad.manualProfile.v1');
       final cachedProfile = readMap('profileCache', 'raad.profileCache.v1');
-      final lastQuery = durable.containsKey('lastProfileQuery')
-          ? durable['lastProfileQuery']?.toString()
-          : prefs.getString('raad.lastProfileQuery.v1');
+      final durableQuery = durable['lastProfileQuery']?.toString();
+      final preferenceQuery = prefs.getString('raad.lastProfileQuery.v1');
+      final lastQuery = (durableQuery?.trim().isNotEmpty == true)
+          ? durableQuery
+          : (preferenceQuery?.trim().isNotEmpty == true)
+              ? preferenceQuery
+              : durable.containsKey('lastProfileQuery')
+                  ? durableQuery
+                  : preferenceQuery;
       final loadedState = <String, dynamic>{
         'rankHistory': rows,
         'savedPlayers': savedRows,
@@ -409,12 +438,23 @@ class _RaadHomeState extends State<RaadHome> {
         'lastProfileQuery': lastQuery,
       };
 
-      // One-time migration from existing SharedPreferences plus fill missing
-      // keys without overwriting a concurrent/newer save.
-      if (loadedState.keys.any((key) => !durable.containsKey(key))) {
+      // One-time migration from SharedPreferences and recovery of any empty
+      // durable values that still have non-empty legacy records.
+      bool hasData(Object? value) {
+        if (value is List || value is Map) return value.isNotEmpty;
+        if (value is String) return value.trim().isNotEmpty;
+        return value != null;
+      }
+
+      if (loadedState.entries.any((entry) =>
+          !durable.containsKey(entry.key) ||
+          (!hasData(durable[entry.key]) && hasData(entry.value)))) {
         final latest = await _localStore.read() ?? <String, dynamic>{};
         for (final entry in loadedState.entries) {
-          latest.putIfAbsent(entry.key, () => entry.value);
+          if (!latest.containsKey(entry.key) ||
+              (!hasData(latest[entry.key]) && hasData(entry.value))) {
+            latest[entry.key] = entry.value;
+          }
         }
         await _localStore.saveAll(latest);
       }
