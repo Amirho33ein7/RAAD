@@ -312,6 +312,7 @@ class _RaadHomeState extends State<RaadHome> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final durable = await _localStore.read() ?? <String, dynamic>{};
+      print('RAAD_LOAD begin: keys=${durable.keys.toList()} playersPref=${prefs.getStringList('raad.savedPlayers.v1')?.length} cachePref=${prefs.getString('raad.profileCache.v1') != null} clipsPref=${prefs.getStringList('raad.clips.v2')?.length}');
 
       List<Map<String, dynamic>> readRows(
         String durableKey,
@@ -405,6 +406,7 @@ class _RaadHomeState extends State<RaadHome> {
           .where((row) =>
               row['profile'] is Map && row['query'] != null)
           .toList();
+      print('RAAD_LOAD parsed: players=${savedRows.length} ranks=${rows.length} clips=${clipRows.length}');
       final durableEvents = durable['events'];
       final preferenceEvents = prefs.getStringList('raad.events.v1');
       final eventsSource = durableEvents is List && durableEvents.isNotEmpty
@@ -466,7 +468,8 @@ class _RaadHomeState extends State<RaadHome> {
               'پروفایل‌ها نمایش داده شدند، اما نوشتن فایل پایدار کامل نشد: $error');
         }
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
+      print('RAAD_LOAD ERROR: $error\n$stackTrace');
       // Do not replace existing state with empty collections on a read failure.
       if (mounted) {
         setState(() {
