@@ -11,12 +11,17 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   // File reads/writes run on real platform I/O. Pumping frames alone doesn't
-  // wait for those futures, so yield to the real event loop before assertions.
-  Future<void> waitForLocalStorage(WidgetTester tester) async {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 150)),
-    );
-    await tester.pumpAndSettle();
+  // wait for those futures, so yield to the real event loop until the resulting
+  // widget appears; if it never appears, the assertion still fails.
+  Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
+    for (var attempt = 0; attempt < 40; attempt++) {
+      if (finder.evaluate().isNotEmpty) return;
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+    }
   }
   Directory? testStoreDirectory;
 
@@ -41,7 +46,7 @@ void main() {
 
   testWidgets('dashboard opens without requiring the network', (tester) async {
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
 
     expect(find.text('مرکز فرماندهی بازیکن'), findsOneWidget);
     expect(find.text('جست‌وجوی پروفایل'), findsWidgets);
@@ -51,7 +56,7 @@ void main() {
 
   testWidgets('drawer routes to rank, compare, clips and sync pages', (tester) async {
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
 
     Future<void> openPage(String label) async {
       await tester.tap(find.byIcon(Icons.menu));
@@ -103,7 +108,7 @@ void main() {
     });
 
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -112,6 +117,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    await pumpUntilFound(tester, find.text('بازیکنان ذخیره‌شده (1)'));
     expect(find.text('بازیکنان ذخیره‌شده (1)'), findsOneWidget);
     expect(find.text('NightOwl'), findsOneWidget);
     await tester.tap(find.byTooltip('بازکردن پروفایل ذخیره‌شده'));
@@ -143,7 +149,7 @@ void main() {
     });
 
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -153,12 +159,15 @@ void main() {
     await tester.pumpAndSettle();
 
     final saveButton = find.text('ذخیرهٔ این بازیکن');
+    await pumpUntilFound(tester, saveButton);
     expect(saveButton, findsOneWidget);
     await tester.ensureVisible(saveButton);
     await tester.pumpAndSettle();
     await tester.tap(saveButton);
     await tester.pumpAndSettle();
-    expect(find.text('بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.'), findsOneWidget);
+    final savedMessage = find.text('بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.');
+    await pumpUntilFound(tester, savedMessage);
+    expect(savedMessage, findsOneWidget);
 
     // Simulate a full process restart and loss of the old preferences mirror.
     final prefs = await SharedPreferences.getInstance();
@@ -167,7 +176,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -176,13 +185,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    await pumpUntilFound(tester, find.text('بازیکنان ذخیره‌شده (1)'));
     expect(find.text('بازیکنان ذخیره‌شده (1)'), findsOneWidget);
     expect(find.text('NightOwl'), findsOneWidget);
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
@@ -191,12 +201,14 @@ void main() {
       matching: find.text('کلیپ‌های من'),
     ));
     await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('کتابخانه خالی است'));
 
     await tester.tap(find.text('افزودن لینک کلیپ'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'https://example.com/my-clip');
     await tester.tap(find.text('ذخیره'));
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('https://example.com/my-clip'));
 
     expect(find.text('https://example.com/my-clip'), findsOneWidget);
     expect(find.text('کتابخانه خالی است'), findsNothing);
@@ -241,7 +253,7 @@ void main() {
     });
 
     await tester.pumpWidget(const RaadApp());
-    await waitForLocalStorage(tester);
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.menu));
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(
@@ -250,7 +262,9 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
+    await pumpUntilFound(tester, find.text('رتبه‌بندی بر اساس پیشرفت لول'));
     expect(find.text('رتبه‌بندی بر اساس پیشرفت لول'), findsOneWidget);
+    await pumpUntilFound(tester, find.text('+10 لول'));
     expect(find.text('+10 لول'), findsOneWidget);
     expect(find.text('+5 لول'), findsOneWidget);
     expect(
