@@ -15,7 +15,7 @@ import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.2+6';
+const String raadAppVersion = '0.4.3+7';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
@@ -62,6 +62,9 @@ class _RaadHomeState extends State<RaadHome> {
   late final Future<void> _localLoadFuture;
   Future<void> _backupWriteQueue = Future<void>.value();
   bool _restoringExternalBackup = false;
+  // Do not write the external backup until it has been read and merged. Otherwise
+  // a slow first load can overwrite the only recoverable copy with stale state.
+  bool _externalBackupInitialized = false;
   final LocalPersistenceService _localStore = LocalPersistenceService();
   int _page = 0;
   List<Map<String, dynamic>> _rankHistory = [];
@@ -182,6 +185,7 @@ class _RaadHomeState extends State<RaadHome> {
       final raw = await _fileStorageChannel.invokeMethod<String>('readBackup');
       if (raw == null || raw.trim().isEmpty) {
         await _syncExternalBackup(fromRestore: true);
+        _externalBackupInitialized = true;
         return;
       }
       final decoded = jsonDecode(raw);
@@ -194,6 +198,7 @@ class _RaadHomeState extends State<RaadHome> {
       await _localStore.saveAll(merged);
       await _loadLocal();
       await _syncExternalBackup(fromRestore: true);
+      _externalBackupInitialized = true;
     } catch (error) {
       // A missing/inaccessible old backup must never erase valid local data.
       if (mounted && _fileAccessMessage == null) {
@@ -293,6 +298,7 @@ class _RaadHomeState extends State<RaadHome> {
   Future<void> _syncExternalBackup({bool fromRestore = false}) {
     if (!Platform.isAndroid ||
         !_fileAccessReady ||
+        (!_externalBackupInitialized && !fromRestore) ||
         (_restoringExternalBackup && !fromRestore)) {
       return Future<void>.value();
     }
