@@ -86,6 +86,6 @@ Backend:
 
 ## فناوری‌ها
 
-Flutter / Dart · SharedPreferences · image_picker · gal · video_player · path_provider · Python / FastAPI · httpx · pytest · GitHub Actions
+Flutter / Dart · SharedPreferences · LocalPersistenceService · Android Storage Access Framework · image_picker · video_player · path_provider · Python / FastAPI · httpx · pytest · GitHub Actions
 
 Call of Duty: Mobile و Activision متعلق به صاحبان مربوطه هستند. رعد یک پروژهٔ مستقل و غیررسمی است.
