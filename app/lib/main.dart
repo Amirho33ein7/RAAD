@@ -1087,9 +1087,26 @@ class _RaadHomeState extends State<RaadHome> {
   Future<void> _removeClip(Map<String, dynamic> clip) async {
     await _ensureLocalReady();
     final identity = _clipIdentity(clip);
-    final next = _clips
+    final previous = List<Map<String, dynamic>>.from(_clips);
+    final next = previous
         .where((item) => _clipIdentity(item) != identity)
         .toList();
+
+    if (next.length == previous.length) {
+      _toast('این کلیپ دیگر در فهرست پیدا نشد؛ فهرست را دوباره باز کن.');
+      return;
+    }
+
+    // Update the visible list immediately, but roll back if durable persistence fails.
+    if (mounted) setState(() => _clips = next);
+    try {
+      await _persistClips(next);
+    } catch (error) {
+      if (mounted) setState(() => _clips = previous);
+      _toast('حذف ذخیره نشد؛ اطلاعات قبلی حفظ شد. $error');
+      return;
+    }
+
     if (clip['type'] == 'video' && clip['path'] is String) {
       try {
         final file = File(clip['path'] as String);
@@ -1105,8 +1122,8 @@ class _RaadHomeState extends State<RaadHome> {
         } catch (_) {}
       }
     }
-    await _persistClips(next);
-    if (mounted) setState(() => _clips = next);
+
+    _toast('کلیپ حذف و ذخیره شد.');
   }
 
   Future<void> _openClipEntry(Map<String, dynamic> clip) async {

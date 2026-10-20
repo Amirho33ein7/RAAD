@@ -315,6 +315,8 @@ void main() {
     await tester.ensureVisible(deleteButton);
     await tester.tap(deleteButton);
     await tester.pumpAndSettle();
+    await pumpUntilFound(tester, find.text('کتابخانه خالی است'));
+    expect(find.text('https://example.com/my-clip'), findsNothing);
     final clipsAfterDelete = await waitForDurableData(
       tester,
       (state) => state['clips'] is List &&
