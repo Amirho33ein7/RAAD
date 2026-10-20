@@ -740,14 +740,15 @@ jobs:
           [[ -n "$apksigner" && -n "$aapt" ]] || { echo "Android signing/manifest tools not found." >&2; exit 1; }
           "$apksigner" verify "$apk"
           expected="$(
-            keytool -list -v -keystore "$RAAD_KEYSTORE_PATH" -storepass "$RAAD_KEYSTORE_PASSWORD" -alias "$RAAD_KEY_ALIAS" |
-            sed -n 's/^[[:space:]]*SHA256: //p' | head -n 1 | tr -d ':' | tr '[:upper:]' '[:lower:]'
+            keytool -exportcert -keystore "$RAAD_KEYSTORE_PATH" -storepass "$RAAD_KEYSTORE_PASSWORD" -alias "$RAAD_KEY_ALIAS" |
+            sha256sum | awk '{print tolower($1)}'
           )"
           actual="$(
             "$apksigner" verify --print-certs "$apk" |
-            sed -n 's/^[[:space:]]*Signer #1 certificate SHA-256 digest: //p' | head -n 1 |
+            awk -F': ' '/Signer #1 certificate SHA-256 digest/ {print $2; exit}' |
             tr -d ':' | tr '[:upper:]' '[:lower:]'
           )"
+          echo "Signing certificate fingerprint comparison: keystore=$expected apk=$actual"
           package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
           [[ -n "$expected" && "$expected" == "$actual" ]] || { echo "APK signing certificate does not match the persistent key." >&2; exit 1; }
           [[ "$package_name" == "com.raad.mobile.raad" ]] || { echo "Unexpected APK package ID: $package_name" >&2; exit 1; }
