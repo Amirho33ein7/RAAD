@@ -312,6 +312,11 @@ class _RaadHomeState extends State<RaadHome> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final durable = await _localStore.read() ?? <String, dynamic>{};
+      debugPrint(
+        'RAAD loadLocal start: durableKeys=${durable.keys.toList()}, '
+        'legacyPlayers=${prefs.getStringList('raad.savedPlayers.v1')?.length}, '
+        'legacyRanks=${prefs.getStringList('raad.rankHistory.v1')?.length}',
+      );
 
       List<Map<String, dynamic>> readRows(
         String durableKey,
@@ -405,6 +410,10 @@ class _RaadHomeState extends State<RaadHome> {
           .where((row) =>
               row['profile'] is Map && row['query'] != null)
           .toList();
+      debugPrint(
+        'RAAD loadLocal parsed: players=${savedRows.length}, '
+        'ranks=${rows.length}, clips=${clipRows.length}',
+      );
       final durableEvents = durable['events'];
       final preferenceEvents = prefs.getStringList('raad.events.v1');
       final eventsSource = durableEvents is List && durableEvents.isNotEmpty
@@ -474,7 +483,8 @@ class _RaadHomeState extends State<RaadHome> {
             : cached?['shortId']?.toString() ?? cached?['nickname']?.toString();
         _query.text = _profileQuery ?? '';
       });
-    } catch (error) {
+    } catch (error, stackTrace) {
+      debugPrint('RAAD loadLocal failed: $error\n$stackTrace');
       // Do not replace existing state with empty collections on a read failure.
       if (mounted) {
         setState(() {
