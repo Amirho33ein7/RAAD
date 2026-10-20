@@ -185,7 +185,11 @@ void main() {
     await pumpUntilFound(tester, find.text('جست‌وجوی پروفایل'));
     final saveButton = find.text('ذخیرهٔ این بازیکن');
     await pumpUntilFound(tester, saveButton);
-    await tester.ensureVisible(saveButton);
+    await tester.scrollUntilVisible(
+      saveButton,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
     await tester.pumpAndSettle();
     expect(saveButton, findsOneWidget);
     await tester.tap(saveButton);
