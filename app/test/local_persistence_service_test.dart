@@ -57,6 +57,36 @@ void main() {
     expect(result['manualProfile']['level'], '21');
   });
 
+  test('keeps the last committed state available if the main file is later corrupted', () async {
+    final store = LocalPersistenceService(directoryProvider: () async => directory);
+    await store.saveAll({
+      'savedPlayers': [
+        {'query': 'UID-OLD', 'profile': {'nickname': 'NightOwl'}},
+      ],
+      'clips': [
+        {'type': 'link', 'url': 'https://example.com/old-clip'},
+      ],
+    });
+    await store.saveValues({
+      'savedPlayers': [
+        {'query': 'UID-NEW', 'profile': {'nickname': 'NightOwl2'}},
+      ],
+      'clips': [
+        {'type': 'link', 'url': 'https://example.com/new-clip'},
+      ],
+    });
+
+    final main = File('${directory.path}/${LocalPersistenceService.fileName}');
+    final backup = File('${main.path}.bak');
+    expect(await backup.exists(), isTrue);
+
+    await main.writeAsString('{damaged JSON');
+    final recovered = await store.read();
+
+    expect((recovered!['savedPlayers'] as List).single['query'], 'UID-OLD');
+    expect((recovered['clips'] as List).single['url'], 'https://example.com/old-clip');
+  });
+
   test('recovers from an interrupted main-file write using the backup copy', () async {
     final store = LocalPersistenceService(directoryProvider: () async => directory);
     final backup = File('${directory.path}/${LocalPersistenceService.fileName}.bak');
