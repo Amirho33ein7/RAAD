@@ -447,28 +447,8 @@ class _RaadHomeState extends State<RaadHome> {
         'lastProfileQuery': lastQuery,
       };
 
-      // One-time migration from SharedPreferences and recovery of any empty
-      // durable values that still have non-empty legacy records.
-      bool hasData(Object? value) {
-        if (value is List) return value.isNotEmpty;
-        if (value is Map) return value.isNotEmpty;
-        if (value is String) return value.trim().isNotEmpty;
-        return value != null;
-      }
-
-      if (loadedState.entries.any((entry) =>
-          !durable.containsKey(entry.key) ||
-          (!hasData(durable[entry.key]) && hasData(entry.value)))) {
-        final latest = await _localStore.read() ?? <String, dynamic>{};
-        for (final entry in loadedState.entries) {
-          if (!latest.containsKey(entry.key) ||
-              (!hasData(latest[entry.key]) && hasData(entry.value))) {
-            latest[entry.key] = entry.value;
-          }
-        }
-        await _localStore.saveAll(latest);
-      }
-
+      // Publish restored data before doing migration disk writes. A delayed
+      // disk write must not keep saved profiles hidden from the user.
       if (!mounted) return;
       final cached = cachedProfile.isEmpty ? null : cachedProfile;
       setState(() {
@@ -483,13 +463,26 @@ class _RaadHomeState extends State<RaadHome> {
             : cached?['shortId']?.toString() ?? cached?['nickname']?.toString();
         _query.text = _profileQuery ?? '';
       });
+
+      // Migrate/recover asynchronously against the newest version of the file.
+      // This fills missing/empty keys while preserving any concurrent changes.
+      try {
+        await _localStore.mergeMissingOrEmpty(loadedState);
+        await _syncExternalBackup();
+      } catch (error) {
+        debugPrint('RAAD durable migration failed: $error');
+        if (mounted) {
+          setState(() => _fileAccessMessage =
+              'پروفایل‌ها نمایش داده شدند، اما نوشتن فایل پایدار کامل نشد: $error');
+        }
+      }
     } catch (error, stackTrace) {
-      debugPrint('RAAD loadLocal failed: $error\n$stackTrace');
+      print('RAAD loadLocal failed: $error\n$stackTrace');
       // Do not replace existing state with empty collections on a read failure.
       if (mounted) {
         setState(() {
-          _fileAccessMessage ??=
-              'بارگذاری داده‌های محلی کامل نشد؛ اطلاعات ذخیره‌شده پاک نشده‌اند.';
+          _fileAccessMessage =
+              'بارگذاری داده‌های محلی کامل نشد: $error';
         });
       }
     }
