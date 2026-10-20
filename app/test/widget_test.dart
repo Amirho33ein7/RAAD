@@ -16,9 +16,15 @@ void main() {
   // wait for those futures, so yield to the real event loop until the resulting
   // widget appears; if it never appears, the assertion still fails.
   Future<void> pumpRaadApp(WidgetTester tester) async {
+    final directory = testStoreDirectory;
+    if (directory == null) {
+      throw StateError('Test persistence directory was not initialized.');
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await tester.pumpWidget(RaadApp(persistence: LocalPersistenceService(directoryProvider: () async => testStoreDirectory!)));
+    await tester.pumpWidget(RaadApp(
+      persistence: LocalPersistenceService(directoryProvider: () async => directory),
+    ));
     await tester.pumpAndSettle();
   }
 
@@ -36,18 +42,23 @@ void main() {
     WidgetTester tester,
     bool Function(Map<String, dynamic> state) predicate,
   ) async {
+    final directory = testStoreDirectory;
+    if (directory == null) return null;
+
     Map<String, dynamic>? last;
-    await tester.runAsync(() async {
-      for (var attempt = 0; attempt < 40; attempt++) {
-        final directory = testStoreDirectory;
-        if (directory == null) return;
-        last = await LocalPersistenceService(
+    // Alternate real filesystem reads with fake-async pumps. Keeping all 40
+    // reads inside one runAsync callback starves the widget's own async write
+    // continuations until after the test has already captured stale state.
+    for (var attempt = 0; attempt < 40; attempt++) {
+      await tester.pump();
+      last = await tester.runAsync(
+        () => LocalPersistenceService(
           directoryProvider: () async => directory,
-        ).read();
-        if (last != null && predicate(last!)) return;
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      }
-    });
+        ).read(),
+      );
+      if (last != null && predicate(last)) return last;
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     await tester.pumpAndSettle();
     return last;
   }
