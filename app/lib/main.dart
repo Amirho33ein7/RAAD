@@ -15,7 +15,7 @@ import 'package:flutter/services.dart';
 
 const backendBaseUrl = String.fromEnvironment('RAAD_API_URL', defaultValue: 'https://callofdutymobile.vercel.app');
 const bool useBackend = bool.fromEnvironment('RAAD_USE_BACKEND', defaultValue: false);
-const String raadAppVersion = '0.4.4+8';
+const String raadAppVersion = '0.4.5+9';
 const String githubReleasesPage = 'https://github.com/Amirho33ein7/RAAD/releases';
 const accent = Color(0xFF55E6F2);
 const panel = Color(0xFF111827);
@@ -1201,23 +1201,37 @@ class _RaadHomeState extends State<RaadHome> {
       builder: (_) => _ManualProfileDialog(initial: _manualProfile),
     );
     if (result == null) return;
+
     final next = <String, dynamic>{};
-    result.forEach((key, value) { if (value.trim().isNotEmpty) next[key] = value.trim(); });
-    await _localStore.saveValue('manualProfile', next);
+    result.forEach((key, value) {
+      if (value.trim().isNotEmpty) next[key] = value.trim();
+    });
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('raad.manualProfile.v1', jsonEncode(next));
-    } catch (_) {}
-    final verified = await _localStore.read();
-    if (verified == null ||
-        jsonEncode(verified['manualProfile']) != jsonEncode(next)) {
-      _toast('ذخیرهٔ پایدار اطلاعات دستی تأیید نشد.');
-      return;
+      // Durable local JSON is the primary copy. Verify it before updating UI.
+      await _localStore.saveValue('manualProfile', next);
+      final verified = await _localStore.read();
+      if (verified == null ||
+          jsonEncode(verified['manualProfile']) != jsonEncode(next)) {
+        throw const FileSystemException(
+          'ذخیرهٔ پایدار اطلاعات پروفایل تأیید نشد.',
+        );
+      }
+
+      // Keep the preference key as a migration/recovery mirror.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('raad.manualProfile.v1', jsonEncode(next));
+      } catch (_) {}
+
+      await _syncExternalBackup();
+      if (!mounted) return;
+      setState(() => _manualProfile = next);
+      await _recordEvent('اطلاعات دستی پروفایل به‌روزرسانی شد.');
+      if (mounted) _toast('پروفایل من روی دستگاه ذخیره و بررسی شد.');
+    } catch (error) {
+      if (mounted) _toast('ذخیرهٔ پروفایل انجام نشد: $error');
     }
-    await _syncExternalBackup();
-    if (!mounted) return;
-    setState(() => _manualProfile = next);
-    await _recordEvent('اطلاعات دستی پروفایل به‌روزرسانی شد.');
   }
 
   Future<void> _checkForUpdates() async {
