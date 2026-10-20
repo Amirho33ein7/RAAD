@@ -25,6 +25,8 @@ void main() {
         },
       ],
       'manualProfile': {'nickname': 'MyProfile', 'level': '91'},
+      'profileCache': {'nickname': 'NightOwl', 'shortId': 'ID-7788', 'level': 88},
+      'lastProfileQuery': 'UID-12345',
     });
 
     final reopened = LocalPersistenceService(directoryProvider: () async => directory);
@@ -33,6 +35,9 @@ void main() {
     expect((restored!['savedPlayers'] as List).single['query'], 'UID-12345');
     expect((restored['savedPlayers'] as List).single['profile']['level'], 88);
     expect(restored['manualProfile']['nickname'], 'MyProfile');
+    expect(restored['profileCache']['nickname'], 'NightOwl');
+    expect(restored['profileCache']['level'], 88);
+    expect(restored['lastProfileQuery'], 'UID-12345');
   });
 
   test('serialized updates preserve unrelated saved data', () async {
