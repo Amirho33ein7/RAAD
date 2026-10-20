@@ -242,14 +242,25 @@ class _RaadHomeState extends State<RaadHome> {
       return jsonEncode(row);
     }
 
+    DateTime savedDate(Map<String, dynamic> row, String key) {
+      final raw = (row[key] ?? row['saved_at'] ?? row['created_at'])?.toString();
+      return raw == null
+          ? DateTime.fromMillisecondsSinceEpoch(0)
+          : DateTime.tryParse(raw) ?? DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
     for (final key in ['savedPlayers', 'clips', 'rankHistory']) {
       final combined = <String, Map<String, dynamic>>{};
       // Insert old backup first, then let current local records win on collision.
       for (final row in [...rows(external[key]), ...rows(local[key])]) {
         combined[identity(key, row)] = row;
       }
-      merged[key] = combined.values.toList().reversed
-          .take(key == 'rankHistory' ? 50 : 100).toList().reversed.toList();
+      final ordered = combined.values.toList();
+      ordered.sort((a, b) {
+        final dateKey = key == 'clips' ? 'created_at' : 'saved_at';
+        return savedDate(b, dateKey).compareTo(savedDate(a, dateKey));
+      });
+      merged[key] = ordered.take(key == 'rankHistory' ? 50 : 100).toList();
     }
 
     final externalManual = external['manualProfile'];
@@ -268,14 +279,13 @@ class _RaadHomeState extends State<RaadHome> {
       merged['lastProfileQuery'] = external['lastProfileQuery'];
     }
 
-    final events = <String>[];
-    for (final event in [
-      if (external['events'] is List) ...(external['events'] as List),
-      if (local['events'] is List) ...(local['events'] as List),
-    ]) {
-      final text = event.toString();
-      if (!events.contains(text)) events.add(text);
-    }
+    final events = <String>{
+      if (external['events'] is List)
+        for (final event in external['events'] as List) event.toString(),
+      if (local['events'] is List)
+        for (final event in local['events'] as List) event.toString(),
+    }.toList()
+      ..sort((a, b) => b.compareTo(a));
     merged['events'] = events.take(100).toList();
     return merged;
   }
