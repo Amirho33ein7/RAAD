@@ -11,7 +11,7 @@ import 'package:path_provider/path_provider.dart';
 /// silently erase a saved profile.
 class LocalPersistenceService {
   LocalPersistenceService({Future<Directory> Function()? directoryProvider})
-      : _directoryProvider = directoryProvider;
+      : _directoryProvider = directoryProvider ?? directoryProviderOverride;
 
   static const String fileName = 'raad_local_data_v1.json';
 
@@ -22,8 +22,9 @@ class LocalPersistenceService {
   Future<void> _writeQueue = Future<void>.value();
 
   Future<Directory> _directory() async {
-    final provider = _directoryProvider ?? directoryProviderOverride;
-    final dir = await (provider ?? getApplicationDocumentsDirectory)();
+    // Capture test overrides at construction, not per operation. Otherwise a
+    // late write from a disposed widget can follow another test's global path.
+    final dir = await (_directoryProvider ?? getApplicationDocumentsDirectory)();
     await dir.create(recursive: true);
     return dir;
   }
