@@ -4,12 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:raad/main.dart';
+import 'package:raad/services/local_persistence_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  Directory? testStoreDirectory;
 
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    testStoreDirectory =
+        await Directory.systemTemp.createTemp('raad-widget-state-');
+    LocalPersistenceService.directoryProviderOverride =
+        () async => testStoreDirectory!;
+  });
+
+  tearDown(() async {
+    LocalPersistenceService.directoryProviderOverride = null;
+    final directory = testStoreDirectory;
+    if (directory != null && await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+    testStoreDirectory = null;
   });
 
   testWidgets('dashboard opens without requiring the network', (tester) async {
@@ -100,6 +115,57 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(rankFinder, findsOneWidget);
+  });
+
+  testWidgets('saved profile survives closing and reopening the app', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'raad.profileCache.v1': jsonEncode({
+        'nickname': 'NightOwl',
+        'shortId': 'ID-7788',
+        'level': 88,
+        'customReadableMpRank': 'Master III',
+        'rating': 5420,
+        'country': 'US',
+      }),
+      'raad.lastProfileQuery.v1': 'UID-12345',
+    });
+
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('پروفایل کالاف'),
+    ));
+    await tester.pumpAndSettle();
+
+    final saveButton = find.text('ذخیرهٔ این بازیکن');
+    expect(saveButton, findsOneWidget);
+    await tester.ensureVisible(saveButton);
+    await tester.pumpAndSettle();
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+    expect(find.text('بازیکن به فهرست ذخیره‌شده‌ها اضافه شد.'), findsOneWidget);
+
+    // Simulate a full process restart and loss of the old preferences mirror.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byType(Drawer),
+      matching: find.text('پروفایل کالاف'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('بازیکنان ذخیره‌شده (1)'), findsOneWidget);
+    expect(find.text('NightOwl'), findsOneWidget);
   });
 
   testWidgets('clip links can be added and removed locally', (tester) async {
