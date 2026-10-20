@@ -441,7 +441,8 @@ class _RaadHomeState extends State<RaadHome> {
       // One-time migration from SharedPreferences and recovery of any empty
       // durable values that still have non-empty legacy records.
       bool hasData(Object? value) {
-        if (value is List || value is Map) return value.isNotEmpty;
+        if (value is List) return value.isNotEmpty;
+        if (value is Map) return value.isNotEmpty;
         if (value is String) return value.trim().isNotEmpty;
         return value != null;
       }
