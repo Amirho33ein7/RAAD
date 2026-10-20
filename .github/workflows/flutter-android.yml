@@ -758,8 +758,8 @@ jobs:
             sha256sum | awk '{print tolower($1)}'
           )"
           actual="$(
-            "$apksigner" verify --print-certs "$apk" 2>&1 |
-            awk -F': ' '/Signer #1 certificate SHA-256 digest/ {gsub(/:/, "", $2); print tolower($2); exit}'
+            "$apksigner" verify --verbose --print-certs "$apk" 2>&1 |
+            grep -Eo '[[:xdigit:]]{64}' | head -n 1 | tr '[:upper:]' '[:lower:]'
           )"
           echo "Signing certificate fingerprint comparison: keystore=$expected apk=$actual"
           package_name="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
