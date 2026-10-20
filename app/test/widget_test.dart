@@ -18,7 +18,8 @@ void main() {
   Future<void> pumpRaadApp(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
-    await pumpRaadApp(tester);
+    await tester.pumpWidget(const RaadApp());
+    await tester.pumpAndSettle();
   }
 
   Future<void> pumpUntilFound(WidgetTester tester, Finder finder) async {
