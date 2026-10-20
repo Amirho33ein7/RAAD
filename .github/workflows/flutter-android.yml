@@ -758,7 +758,7 @@ jobs:
             sha256sum | awk '{print tolower($1)}'
           )"
           actual="$(
-            "$apksigner" verify --print-certs "$apk" |
+            "$apksigner" verify --print-certs "$apk" 2>&1 |
             awk -F': ' '/Signer #1 certificate SHA-256 digest/ {gsub(/:/, "", $2); print tolower($2); exit}'
           )"
           echo "Signing certificate fingerprint comparison: keystore=$expected apk=$actual"
