@@ -213,6 +213,7 @@ void main() {
     await tester.tap(find.text('ذخیره'));
     await tester.pumpAndSettle();
     final savedClipLink = find.text('https://example.com/my-clip');
+    await pumpUntilFound(tester, savedClipLink);
     await tester.scrollUntilVisible(
       savedClipLink,
       220,
