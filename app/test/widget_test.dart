@@ -317,6 +317,10 @@ void main() {
     await tester.pumpAndSettle();
     await pumpUntilFound(tester, find.text('کتابخانه خالی است'));
     expect(find.text('https://example.com/my-clip'), findsNothing);
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pumpAndSettle();
     final clipsAfterDelete = await waitForDurableData(
       tester,
       (state) => state['clips'] is List &&

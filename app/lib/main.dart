@@ -1103,6 +1103,7 @@ class _RaadHomeState extends State<RaadHome> {
       await _persistClips(next);
     } catch (error) {
       if (mounted) setState(() => _clips = previous);
+      debugPrint('RAAD_CLIP_DELETE_PERSIST_FAILED: $error');
       _toast('حذف ذخیره نشد؛ اطلاعات قبلی حفظ شد. $error');
       return;
     }
