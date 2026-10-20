@@ -131,15 +131,26 @@ jobs:
                   val treeUri = persistedTreeUri()
                   val folderUri = selectedFolderUri()
                   if (treeUri != null && folderUri != null) {
-                      val name = storagePrefs.getString("folderDisplayName", "RAAD") ?: "RAAD"
-                      result.success(mapOf(
-                          "granted" to true,
-                          "folderName" to name,
-                          "message" to "دسترسی پایدار پوشهٔ $name فعال است."
-                      ))
-                      return
+                      try {
+                          // A stored URI alone is not proof that the provider still permits writes.
+                          verifyFolderWritable(folderUri)
+                          val name = storagePrefs.getString("folderDisplayName", "RAAD") ?: "RAAD"
+                          result.success(mapOf(
+                              "granted" to true,
+                              "folderName" to name,
+                              "message" to "دسترسی نوشتن در پوشهٔ $name بررسی و تأیید شد."
+                          ))
+                          return
+                      } catch (_: Exception) {
+                          // Stale/revoked access must reopen Android's system folder picker.
+                          storagePrefs.edit()
+                              .remove("treeUri")
+                              .remove("folderDocumentId")
+                              .remove("folderDisplayName")
+                              .apply()
+                      }
                   }
-          
+
                   if (pendingFolderResult != null) {
                       result.error("folder_picker_in_progress", "انتخاب پوشه در حال انجام است.", null)
                       return
@@ -155,7 +166,7 @@ jobs:
                               Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
                           )
                           if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                              val documentsUri = DocumentsContract.buildDocumentUri(
+                              val documentsUri = DocumentsContract.buildTreeDocumentUri(
                                   "com.android.externalstorage.documents",
                                   "primary:Documents"
                               )
@@ -235,6 +246,31 @@ jobs:
                   }
               }
           
+              private fun verifyFolderWritable(folderUri: Uri) {
+                  val probeName = ".raad_write_check_${System.currentTimeMillis()}.tmp"
+                  val probeUri = DocumentsContract.createDocument(
+                      contentResolver,
+                      folderUri,
+                      "application/octet-stream",
+                      probeName
+                  ) ?: throw IOException("اندروید نتوانست فایل آزمایشی در پوشه بسازد.")
+                  try {
+                      val expected = "RAAD_STORAGE_WRITE_OK".toByteArray(Charsets.UTF_8)
+                      contentResolver.openOutputStream(probeUri, "wt")?.use { output ->
+                          output.write(expected)
+                          output.flush()
+                      } ?: throw IOException("نوشتن آزمایشی در پوشه ممکن نشد.")
+                      val actual = contentResolver.openInputStream(probeUri)?.use {
+                          it.readBytes()
+                      } ?: throw IOException("خواندن فایل آزمایشی ممکن نشد.")
+                      if (!expected.contentEquals(actual)) {
+                          throw IOException("آزمون نوشتن و خواندن پوشه تأیید نشد.")
+                      }
+                  } finally {
+                      try { contentResolver.delete(probeUri, null, null) } catch (_: Exception) {}
+                  }
+              }
+
               private fun queryDisplayName(treeUri: Uri, documentId: String): String? {
                   val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
                   var cursor: Cursor? = null
@@ -369,7 +405,11 @@ jobs:
                       )
                       if (cursor != null && cursor.moveToFirst()) {
                           val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
-                          if (index >= 0 && !cursor.isNull(index)) return cursor.getLong(index)
+                          if (index >= 0 && !cursor.isNull(index)) {
+                              val reportedSize = cursor.getLong(index)
+                              // Some document providers return 0/-1 before refreshing metadata.
+                              if (reportedSize > 0L) return reportedSize
+                          }
                       }
                   } catch (_: Exception) {
                       // Some document providers omit metadata; count bytes by streaming below.
