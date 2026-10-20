@@ -178,6 +178,7 @@ void main() {
     // finished and the actual profile page replaced the loading screen.
     await pumpUntilFound(tester, find.text('جست‌وجوی پروفایل'));
     final saveButton = find.text('ذخیرهٔ این بازیکن');
+    await pumpUntilFound(tester, saveButton);
     await tester.scrollUntilVisible(
       saveButton,
       220,
@@ -278,6 +279,7 @@ void main() {
     );
 
     final savedClipLink = find.text('https://example.com/my-clip');
+    await pumpUntilFound(tester, savedClipLink);
     await tester.scrollUntilVisible(
       savedClipLink,
       220,
